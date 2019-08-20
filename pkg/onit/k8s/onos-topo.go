@@ -273,6 +273,17 @@ func (c *ClusterController) awaitOnosTopoDeploymentReady() error {
 		if int(dep.Status.ReadyReplicas) == c.config.TopoNodes {
 			return nil
 		}
+
+		var progress string
+		for _, pod := range pods.Items {
+			for _, container := range pod.Status.ContainerStatuses {
+				if container.State.Waiting != nil {
+					progress = fmt.Sprintf("%s %s", container.State.Waiting.Reason, container.State.Waiting.Message)
+					break
+				}
+			}
+		}
+		c.status.Progress(progress)
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -417,6 +428,24 @@ func (c *ClusterController) awaitOnosTopoProxyDeploymentReady() error {
 		if int(dep.Status.ReadyReplicas) == 1 {
 			return nil
 		}
+
+		pods, err := c.kubeclient.CoreV1().Pods(c.clusterID).List(metav1.ListOptions{
+			LabelSelector: "app=onos,type=topo-envoy",
+		})
+		if err != nil {
+			return err
+		}
+
+		var progress string
+		for _, pod := range pods.Items {
+			for _, container := range pod.Status.ContainerStatuses {
+				if container.State.Waiting != nil {
+					progress = fmt.Sprintf("%s %s", container.State.Waiting.Reason, container.State.Waiting.Message)
+					break
+				}
+			}
+		}
+		c.status.Progress(progress)
 		time.Sleep(100 * time.Millisecond)
 	}
 }

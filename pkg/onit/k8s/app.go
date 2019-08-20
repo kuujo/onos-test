@@ -215,7 +215,6 @@ func (c *ClusterController) createOnosAppDeployment(name string, image string) e
 
 // createAppService creates an app service
 func (c *ClusterController) createAppService(name string) error {
-
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -251,6 +250,24 @@ func (c *ClusterController) awaitOnosAppDeploymentReady(name string) error {
 		if int(dep.Status.ReadyReplicas) == c.config.ConfigNodes {
 			return nil
 		}
+
+		pods, err := c.kubeclient.CoreV1().Pods(c.clusterID).List(metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("app=onos,type=app,resource=%s", name),
+		})
+		if err != nil {
+			return err
+		}
+
+		var progress string
+		for _, pod := range pods.Items {
+			for _, container := range pod.Status.ContainerStatuses {
+				if container.State.Waiting != nil {
+					progress = fmt.Sprintf("%s %s", container.State.Waiting.Reason, container.State.Waiting.Message)
+					break
+				}
+			}
+		}
+		c.status.Progress(progress)
 		time.Sleep(100 * time.Millisecond)
 	}
 }

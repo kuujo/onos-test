@@ -65,6 +65,16 @@ func (s *StatusWriter) Start(status string) {
 	s.spinner.Spin()
 }
 
+// Progress prints a progress message on the current status
+func (s *StatusWriter) Progress(message string) *StatusWriter {
+	if s.status == "" {
+		return s
+	}
+
+	s.spinner.SetMessage(fmt.Sprintf(" %-24s %-24s ", s.status, message))
+	return s
+}
+
 // Succeed completes the current status successfully
 func (s *StatusWriter) Succeed() *StatusWriter {
 	if s.status == "" {
