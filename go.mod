@@ -3,7 +3,6 @@ module github.com/onosproject/onos-test
 go 1.12
 
 require (
-	github.com/atomix/atomix-api v0.0.0-20191021183656-837bfda65c82
 	github.com/atomix/atomix-go-client v0.0.0-20191017214255-835d39bd51ae
 	github.com/atomix/atomix-k8s-controller v0.0.0-20191128003108-7f54c8829b18
 	github.com/dustinkirkland/golang-petname v0.0.0-20190613200456-11339a705ed2
