@@ -228,7 +228,7 @@ func init() {
 	proto.RegisterType((*SimulatorResponse)(nil), "onos.test.simulation.SimulatorResponse")
 }
 
-func init() { proto.RegisterFile("simulation/simulator.proto", fileDescriptor_615ece67fe6e0607) }
+func init() { proto.RegisterFile("simulation/key.proto", fileDescriptor_615ece67fe6e0607) }
 
 var fileDescriptor_615ece67fe6e0607 = []byte{
 	// 364 bytes of a gzipped FileDescriptorProto
@@ -514,7 +514,7 @@ var _SimulatorService_serviceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "simulation/simulator.proto",
+	Metadata: "simulation/key.proto",
 }
 
 func (m *SimulationLifecycleRequest) Marshal() (dAtA []byte, err error) {

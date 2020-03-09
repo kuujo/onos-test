@@ -34,7 +34,7 @@ const (
 	simulationImageEnv           = "SIMULATION_IMAGE"
 	simulationImagePullPolicyEnv = "SIMULATION_IMAGE_PULL_POLICY"
 	simulationNameEnv            = "SIMULATION_NAME"
-	simulationModelEnv           = "SIMULATION_MODEL"
+	simulationTraceEnv           = "SIMULATION_TRACE"
 	simulationSimulatorsEnv      = "SIMULATION_SIMULATORS"
 	simulationDurationEnv        = "SIMULATION_DURATION"
 	simulationRatesEnv           = "SIMULATION_RATES"
@@ -47,11 +47,6 @@ const (
 	simulationContextCoordinator simulationContext = "coordinator"
 	simulationContextWorker      simulationContext = "worker"
 )
-
-// getAddress returns the service address
-func getAddress() string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local:5000", os.Getenv("SERVICE_NAME"), os.Getenv("SERVICE_NAMESPACE"))
-}
 
 // GetConfigFromEnv returns the simulation configuration from the environment
 func GetConfigFromEnv() *Config {
@@ -102,7 +97,7 @@ func GetConfigFromEnv() *Config {
 		Image:           os.Getenv(simulationImageEnv),
 		ImagePullPolicy: corev1.PullPolicy(os.Getenv(simulationImagePullPolicyEnv)),
 		Simulation:      os.Getenv(simulationNameEnv),
-		Model:           os.Getenv(simulationModelEnv),
+		Trace:           os.Getenv(simulationTraceEnv),
 		Simulators:      workers,
 		Duration:        duration,
 		Rates:           rates,
@@ -118,8 +113,8 @@ type Config struct {
 	Image           string
 	ImagePullPolicy corev1.PullPolicy
 	Simulation      string
-	Model           string
 	Simulators      int
+	Trace           string
 	Rates           map[string]time.Duration
 	Jitter          map[string]float64
 	Duration        time.Duration
@@ -134,7 +129,7 @@ func (c *Config) ToEnv() map[string]string {
 	env[simulationImageEnv] = c.Image
 	env[simulationImagePullPolicyEnv] = string(c.ImagePullPolicy)
 	env[simulationNameEnv] = c.Simulation
-	env[simulationModelEnv] = c.Model
+	env[simulationTraceEnv] = c.Trace
 	env[simulationSimulatorsEnv] = fmt.Sprintf("%d", c.Simulators)
 	env[simulationDurationEnv] = fmt.Sprintf("%d", c.Duration)
 	rates := make(map[string]string)

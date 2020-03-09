@@ -3,6 +3,7 @@ module github.com/onosproject/onos-test
 go 1.13
 
 require (
+	github.com/Shopify/sarama v1.26.1
 	github.com/atomix/go-client v0.0.0-20200218200323-6fd69e684d05
 	github.com/atomix/kubernetes-controller v0.0.0-20200202101151-b31765af9a0f
 	github.com/dustinkirkland/golang-petname v0.0.0-20190613200456-11339a705ed2
@@ -19,11 +20,11 @@ require (
 	github.com/spf13/cobra v0.0.6
 	github.com/spf13/viper v1.6.2
 	github.com/stretchr/testify v1.5.1
-	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
+	golang.org/x/crypto v0.0.0-20200204104054-c9f3fb736b72
 	golang.org/x/tools v0.0.0-20200113040837-eac381796e91
 	google.golang.org/grpc v1.27.1
 	gopkg.in/yaml.v1 v1.0.0-20140924161607-9f9df34309c0
-	gopkg.in/yaml.v2 v2.2.7
+	gopkg.in/yaml.v2 v2.2.8
 	gotest.tools v2.2.0+incompatible
 	k8s.io/api v0.0.0-20190620073856-dcce3486da33
 	k8s.io/apiextensions-apiserver v0.0.0-20190325193600-475668423e9f

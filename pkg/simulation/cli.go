@@ -33,7 +33,6 @@ func GetCommand() *cobra.Command {
 	cmd.Flags().StringP("image", "i", "", "the simulation image to run")
 	cmd.Flags().String("image-pull-policy", string(corev1.PullIfNotPresent), "the image pull policy to use")
 	cmd.Flags().StringP("simulation", "s", "", "the simulation suite to run")
-	cmd.Flags().StringP("model", "m", "", "a model with which to verify the simulation")
 	cmd.Flags().IntP("simulators", "w", 1, "the number of simulator workers to run")
 	cmd.Flags().DurationP("duration", "d", 10*time.Minute, "the duration for which to run the simulation")
 	cmd.Flags().StringToStringP("args", "a", map[string]string{}, "a mapping of named simulation arguments")
@@ -45,7 +44,6 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 	image, _ := cmd.Flags().GetString("image")
 	pullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	simulation, _ := cmd.Flags().GetString("simulation")
-	model, _ := cmd.Flags().GetString("model")
 	simulators, _ := cmd.Flags().GetInt("simulators")
 	duration, _ := cmd.Flags().GetDuration("duration")
 	args, _ := cmd.Flags().GetStringToString("args")
@@ -55,7 +53,6 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 		Image:           image,
 		ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 		Simulation:      simulation,
-		Model:           model,
 		Simulators:      simulators,
 		Duration:        duration,
 		Args:            args,

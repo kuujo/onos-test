@@ -120,18 +120,8 @@ func (s *Simulator) Arg(name string) *Arg {
 }
 
 // Trace records the given object as a trace
-func (s *Simulator) Trace(value struct{}) error {
+func (s *Simulator) Trace(value interface{}) error {
 	return s.register.Trace(value)
-}
-
-// TraceFields records a trace of fields and values to the register
-func (s *Simulator) TraceFields(fieldsAndValues ...interface{}) error {
-	return s.register.TraceFields(fieldsAndValues...)
-}
-
-// TraceValues records an trace in the register
-func (s *Simulator) TraceValues(values ...interface{}) error {
-	return s.register.TraceValues(values...)
 }
 
 // Schedule schedules an operation
@@ -384,7 +374,7 @@ func (s *simulatorServer) StartSimulator(ctx context.Context, request *Simulator
 		return nil, err
 	}
 
-	register, err := newBlockingRegister(request.Simulation, request.Register)
+	register, err := newRegister(fmt.Sprintf("%s/%d", request.Simulation, getSimulatorID()), request.Register)
 	if err != nil {
 		return nil, err
 	}

@@ -17,7 +17,7 @@ build-kube-bench:
 	go build -o build/_output/kube-bench ./cmd/kube-bench
 
 build-onit:
-	go build -o build/_output/onit ./cmd/onit
+	go build -tags static -o build/_output/onit ./cmd/onit
 
 build-onos-tests:
 	go build -o build/onos-tests/_output/bin/onos-tests ./cmd/onos-tests
@@ -63,14 +63,8 @@ onit-docker:
 		--build-arg ONOS_BUILD_VERSION=${ONOS_BUILD_VERSION} \
 		-t onosproject/onit:${ONOS_TEST_VERSION}
 
-model-checker-docker: # @HELP build model-checker Docker image
-model-checker-docker:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/model-checker/_output/bin/model-checker-server ./cmd/model-checker-server
-	docker build build/model-checker -f build/model-checker/Dockerfile \
-		-t onosproject/model-checker:${ONOS_TEST_VERSION}
-
 images: # @HELP build all Docker images
-images: onit-docker model-checker-docker
+images: onit-docker
 
 kind: # @HELP build Docker images and add them to the currently configured kind cluster
 kind: images
