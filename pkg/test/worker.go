@@ -15,8 +15,11 @@
 package test
 
 import (
+	"context"
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/registry"
+	"google.golang.org/grpc"
+	"net"
 	"os"
 	"testing"
 )
@@ -33,18 +36,29 @@ type Worker struct {
 	config *Config
 }
 
-// Run runs a test
+// Run runs a benchmark
 func (w *Worker) Run() error {
-	test := registry.GetTestSuite(w.config.Suites[0])
+	lis, err := net.Listen("tcp", ":5000")
+	if err != nil {
+		return err
+	}
+	server := grpc.NewServer()
+	RegisterWorkerServiceServer(server, w)
+	return server.Serve(lis)
+}
+
+// RunTests runs a suite of tests
+func (w *Worker) RunTests(ctx context.Context, request *TestRequest) (*TestResponse, error) {
+	test := registry.GetTestSuite(request.Suite)
 	if test == nil {
-		return fmt.Errorf("unknown test suite %s", w.config.Suites[0])
+		return nil, fmt.Errorf("unknown test suite %s", w.config.Suites[0])
 	}
 
 	tests := []testing.InternalTest{
 		{
 			Name: w.config.Suites[0],
 			F: func(t *testing.T) {
-				RunTests(t, test, w.config)
+				RunTests(t, test, request.Tests)
 			},
 		},
 	}
@@ -56,5 +70,5 @@ func (w *Worker) Run() error {
 	}
 
 	testing.Main(func(_, _ string) (bool, error) { return true, nil }, tests, nil, nil)
-	return nil
+	return &TestResponse{}, nil
 }

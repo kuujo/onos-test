@@ -15,6 +15,7 @@
 package test
 
 import (
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 )
 
@@ -32,6 +33,10 @@ func Main() {
 
 // Run runs a test
 func Run() error {
+	if err := job.Bootstrap(); err != nil {
+		return err
+	}
+
 	config := GetConfigFromEnv()
 	context := getTestContext()
 	switch context {

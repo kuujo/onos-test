@@ -15,24 +15,19 @@
 package test
 
 import (
-	"bufio"
-	"errors"
+	"context"
 	"fmt"
-	"github.com/onosproject/onos-test/pkg/cluster"
 	"github.com/onosproject/onos-test/pkg/helm"
+	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
-	"github.com/onosproject/onos-test/pkg/util/logging"
+	"google.golang.org/grpc"
 	"io/ioutil"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"os"
-	"path"
+	"path/filepath"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // newCoordinator returns a new test coordinator
@@ -68,14 +63,14 @@ func (c *Coordinator) Run() error {
 				Env:             c.config.Env,
 				Iterations:      c.config.Iterations,
 			}
-			testCluster, err := cluster.NewCluster(config.ID)
+			testCluster, err := job.NewNamespace(config.ID)
 			if err != nil {
 				return err
 			}
 			worker := &WorkerTask{
-				client:  c.client,
-				cluster: testCluster,
-				config:  config,
+				client:    c.client,
+				namespace: testCluster,
+				config:    config,
 			}
 			workers[i] = worker
 		}
@@ -134,264 +129,58 @@ func newJobID(testID, suite string) string {
 
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
-	client  *kubernetes.Clientset
-	cluster *cluster.Cluster
-	config  *Config
+	client    *kubernetes.Clientset
+	namespace *job.Namespace
+	config    *Config
 }
 
 // Run runs the worker job
 func (t *WorkerTask) Run() (int, error) {
-	// Start the job
-	err := t.start()
-	if err != nil {
-		_ = t.tearDown()
+	if err := t.namespace.Create(); err != nil {
 		return 0, err
 	}
 
-	// Get the stream of logs for the pod
-	pod, err := t.getPod(func(pod corev1.Pod) bool {
-		return len(pod.Status.ContainerStatuses) > 0 &&
-			pod.Status.ContainerStatuses[0].State.Running != nil
-	})
-	if err != nil {
-		_ = t.tearDown()
-		return 0, err
-	} else if pod == nil {
-		_ = t.tearDown()
-		return 0, errors.New("cannot locate test pod")
-	}
-
-	req := t.client.CoreV1().Pods(t.config.ID).GetLogs(pod.Name, &corev1.PodLogOptions{
-		Follow: true,
-	})
-	reader, err := req.Stream()
-	if err != nil {
-		_ = t.tearDown()
-		return 0, err
-	}
-	defer reader.Close()
-
-	// Stream the logs to stdout
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		logging.Print(scanner.Text())
-	}
-
-	// Get the exit message and code
-	_, status, err := t.getStatus()
-	if err != nil {
-		_ = t.tearDown()
-		return 0, err
-	}
-
-	// Tear down the cluster if necessary
-	_ = t.tearDown()
-	return status, nil
-}
-
-// start starts the worker job
-func (t *WorkerTask) start() error {
-	if err := t.cluster.Create(); err != nil {
-		return err
-	}
-	if err := t.startTest(); err != nil {
-		return err
-	}
-	if err := t.awaitTestJobRunning(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// startTest starts running a test job
-func (t *WorkerTask) startTest() error {
-	if err := t.createTestJob(); err != nil {
-		return err
-	}
-	if err := t.awaitTestJobRunning(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// createTestJob creates the job to run tests
-func (t *WorkerTask) createTestJob() error {
-	zero := int32(0)
-	one := int32(1)
-
-	var volumes []corev1.Volume
-	var volumeMounts []corev1.VolumeMount
-	if file, err := os.Open(path.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
+	var data map[string]string
+	if file, err := os.Open(filepath.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
 		bytes, err := ioutil.ReadAll(file)
 		if err != nil {
-			return err
+			return 0, err
 		}
-
-		cm := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      t.config.ID,
-				Namespace: t.config.ID,
-				Annotations: map[string]string{
-					"job": t.config.ID,
-				},
-			},
-			Data: map[string]string{
-				helm.ValuesFile: string(bytes),
-			},
-		}
-		if _, err := t.client.CoreV1().ConfigMaps(t.config.ID).Create(cm); err != nil {
-			return err
-		}
-
-		volumes = []corev1.Volume{
-			{
-				Name: "config",
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: t.config.ID,
-						},
-					},
-				},
-			},
-		}
-		volumeMounts = []corev1.VolumeMount{
-			{
-				Name:      "config",
-				MountPath: helm.ValuesPath,
-				ReadOnly:  true,
-			},
+		data = map[string]string{
+			helm.ValuesFile: string(bytes),
 		}
 	}
 
-	env := t.config.ToEnv()
-	env[kube.NamespaceEnv] = t.config.ID
-	env[testContextEnv] = string(testContextWorker)
-	env[testJobEnv] = t.config.ID
-
-	envVars := make([]corev1.EnvVar, 0, len(env))
-	for key, value := range env {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  key,
-			Value: value,
-		})
-	}
-	delete(env, "POD_NAMESPACE")
-	envVars = append(envVars, corev1.EnvVar{
-		Name: "POD_NAMESPACE",
-		ValueFrom: &corev1.EnvVarSource{
-			FieldRef: &corev1.ObjectFieldSelector{
-				FieldPath: "metadata.namespace",
-			},
-		},
-	})
-	delete(env, "POD_NAME")
-	envVars = append(envVars, corev1.EnvVar{
-		Name: "POD_NAME",
-		ValueFrom: &corev1.EnvVarSource{
-			FieldRef: &corev1.ObjectFieldSelector{
-				FieldPath: "metadata.name",
-			},
-		},
-	})
-
-	batchJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      t.config.ID,
-			Namespace: t.config.ID,
-			Annotations: map[string]string{
-				"job": t.config.ID,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			Parallelism:  &one,
-			Completions:  &one,
-			BackoffLimit: &zero,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"job": t.config.ID,
-					},
-				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: t.config.ID,
-					RestartPolicy:      corev1.RestartPolicyNever,
-					Containers: []corev1.Container{
-						{
-							Name:            "test",
-							Image:           t.config.Image,
-							ImagePullPolicy: t.config.ImagePullPolicy,
-							Env:             envVars,
-							VolumeMounts:    volumeMounts,
-						},
-					},
-					Volumes: volumes,
-				},
-			},
-		},
+	job := &job.Job{
+		ID:              t.config.ID,
+		Image:           t.config.Image,
+		ImagePullPolicy: t.config.ImagePullPolicy,
+		Context:         helm.ContextPath,
+		Data:            data,
+		Env:             t.config.ToEnv(),
+		Timeout:         t.config.Timeout,
+		Type:            "test",
 	}
 
-	if t.config.Timeout > 0 {
-		timeoutSeconds := int64(t.config.Timeout / time.Second)
-		batchJob.Spec.ActiveDeadlineSeconds = &timeoutSeconds
+	if err := t.namespace.StartJob(job); err != nil {
+		return 0, err
 	}
-	_, err := t.client.BatchV1().Jobs(t.config.ID).Create(batchJob)
-	return err
-}
 
-// awaitTestJobRunning blocks until the test job creates a pod in the RUNNING state
-func (t *WorkerTask) awaitTestJobRunning() error {
-	for {
-		pod, err := t.getPod(func(pod corev1.Pod) bool {
-			return len(pod.Status.ContainerStatuses) > 0 &&
-				pod.Status.ContainerStatuses[0].Ready
-		})
-		if err != nil {
-			return err
-		} else if pod != nil {
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// getStatus gets the status message and exit code of the given test
-func (t *WorkerTask) getStatus() (string, int, error) {
-	for {
-		pod, err := t.getPod(func(pod corev1.Pod) bool {
-			return len(pod.Status.ContainerStatuses) > 0 &&
-				pod.Status.ContainerStatuses[0].State.Terminated != nil
-		})
-		if err != nil {
-			return "", 0, err
-		} else if pod != nil {
-			state := pod.Status.ContainerStatuses[0].State
-			if state.Terminated != nil {
-				return state.Terminated.Message, int(state.Terminated.ExitCode), nil
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// getPod finds the Pod for the given test
-func (t *WorkerTask) getPod(predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
-	pods, err := t.client.CoreV1().Pods(t.config.ID).List(metav1.ListOptions{
-		LabelSelector: "job=" + t.config.ID,
-	})
+	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", job.ID, job.ID)
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
-		return nil, err
-	} else if len(pods.Items) > 0 {
-		for _, pod := range pods.Items {
-			if predicate(pod) {
-				return &pod, nil
-			}
-		}
+		return 0, err
 	}
-	return nil, nil
-}
+	client := NewWorkerServiceClient(conn)
+	_, err = client.RunTests(context.Background(), &TestRequest{})
+	if err != nil {
+		return 0, err
+	}
 
-// tearDown tears down the job
-func (t *WorkerTask) tearDown() error {
-	return t.cluster.Delete()
+	status, err := t.namespace.WaitForExit(job)
+	if err != nil {
+		return 0, err
+	}
+	_ = t.namespace.Delete()
+	return status, err
 }

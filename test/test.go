@@ -30,14 +30,14 @@ type ChartTestSuite struct {
 // TestLocalInstall tests a local chart installation
 func (s *ChartTestSuite) TestLocalInstall(t *testing.T) {
 	atomix := helm.Helm().
-		Chart("/etc/charts/atomix-controller").
+		Chart("atomix-controller").
 		Release("atomix-controller").
 		Set("namespace", helm.Namespace())
 	err := atomix.Install(true)
 	assert.NoError(t, err)
 
 	topo := helm.Helm().
-		Chart("/etc/charts/onos-topo").
+		Chart("onos-topo").
 		Release("onos-topo").
 		Set("store.controller", fmt.Sprintf("atomix-controller.%s.svc.cluster.local:5679", helm.Namespace()))
 	err = topo.Install(true)

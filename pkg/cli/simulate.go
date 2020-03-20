@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onosproject/onos-test/pkg/cluster"
+	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -124,7 +124,7 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 		Env:             env,
 	}
 
-	job := &cluster.Job{
+	job := &job.Job{
 		ID:              config.ID,
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
@@ -135,7 +135,7 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create a job runner and run the benchmark job
-	runner, err := cluster.NewRunner()
+	runner, err := job.NewRunner()
 	if err != nil {
 		return err
 	}

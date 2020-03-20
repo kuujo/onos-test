@@ -19,13 +19,14 @@ import (
 	"github.com/onosproject/onos-test/pkg/helm"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"sigs.k8s.io/yaml"
 	"strings"
 	"time"
 
 	"github.com/onosproject/onos-test/pkg/util/logging"
 
-	"github.com/onosproject/onos-test/pkg/cluster"
+	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/test"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
@@ -37,6 +38,7 @@ func getTestCommand() *cobra.Command {
 		Use:     "test",
 		Aliases: []string{"tests"},
 		Short:   "Run tests on Kubernetes",
+		Args:    cobra.MaximumNArgs(1),
 		RunE:    runTestCommand,
 	}
 	cmd.Flags().StringP("image", "i", "", "the test image to run")
@@ -54,7 +56,7 @@ func getTestCommand() *cobra.Command {
 	return cmd
 }
 
-func runTestCommand(cmd *cobra.Command, _ []string) error {
+func runTestCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
 	image, _ := cmd.Flags().GetString("image")
@@ -81,6 +83,15 @@ func runTestCommand(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	var context string
+	if len(args) > 0 {
+		path, err := filepath.Abs(args[0])
+		if err != nil {
+			return err
+		}
+		context = path
+	}
+
 	config := &test.Config{
 		ID:              random.NewPetName(2),
 		Image:           image,
@@ -93,22 +104,28 @@ func runTestCommand(cmd *cobra.Command, _ []string) error {
 		Verbose:         logging.GetVerbose(),
 	}
 
-	job := &cluster.Job{
+	j := &job.Job{
 		ID:              config.ID,
 		Image:           image,
 		ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+		Context:         context,
 		Data:            data,
 		Env:             config.ToEnv(),
 		Timeout:         timeout,
 		Type:            "test",
 	}
 
-	// Create a job runner and run the test job
-	runner, err := cluster.NewRunner()
+	// Create a job coordinator and run the test job
+	coordinator, err := job.NewCoordinator()
 	if err != nil {
 		return err
 	}
-	return runner.Run(job)
+	status, err := coordinator.RunJob(j)
+	if err != nil {
+		return err
+	}
+	os.Exit(status)
+	return nil
 }
 
 func parseEnv(values []string) (map[string]string, error) {

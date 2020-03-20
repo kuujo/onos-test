@@ -12,85 +12,87 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cluster
+package job
 
 import (
 	"bufio"
-	"errors"
+	"context"
+	"fmt"
 	"github.com/onosproject/onos-test/pkg/helm"
-	"os"
-	"time"
-
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/util/logging"
+	"google.golang.org/grpc"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/cp"
+	"time"
 )
 
-const namespace = "kube-test"
+const clusterRole = "kube-test-cluster"
 
-// Job is a job configuration
-type Job struct {
-	ID              string
-	Image           string
-	ImagePullPolicy corev1.PullPolicy
-	Data            map[string]string
-	Args            []string
-	Env             map[string]string
-	Timeout         time.Duration
-	Type            string
+// NewNamespace returns a new job namespace
+func NewNamespace(namespace string) *Namespace {
+	return newRunner(namespace, true)
 }
 
-// NewRunner returns a new test job runner
-func NewRunner() (*Runner, error) {
-	return &Runner{
-		client: kube.NewClient(namespace).Clientset(),
-	}, nil
+// newRunner returns a new job runner
+func newRunner(namespace string, server bool) *Namespace {
+	return &Namespace{
+		client:    kube.NewClient(namespace).Clientset(),
+		namespace: namespace,
+		server:    server,
+	}
 }
 
-// Runner manages the test coordinator cluster
-type Runner struct {
-	client *kubernetes.Clientset
+// Namespace manages test jobs within a namespace
+type Namespace struct {
+	client    *kubernetes.Clientset
+	namespace string
+	server    bool
 }
 
-// Run runs the given job in the coordinator namespace
-func (r *Runner) Run(job *Job) error {
-	if err := r.ensureNamespace(); err != nil {
+// Run runs the given job
+func (n *Namespace) RunJob(job *Job) (int, error) {
+	if err := n.StartJob(job); err != nil {
+		return 0, err
+	}
+	return n.WaitForExit(job)
+}
+
+// StartJob starts the given job
+func (n *Namespace) StartJob(job *Job) error {
+	if err := n.startJob(job); err != nil {
 		return err
 	}
+	go n.streamLogs(job)
+	return nil
+}
 
-	err := r.startJob(job)
-	if err != nil {
-		return err
-	}
-
-	step := logging.NewStep(job.ID, "Run job")
-	step.Start()
-
+// streamLogs streams logs from the given pod
+func (n *Namespace) streamLogs(job *Job) {
 	// Get the stream of logs for the pod
-	pod, err := r.getPod(job, func(pod corev1.Pod) bool {
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 		return len(pod.Status.ContainerStatuses) > 0 &&
 			pod.Status.ContainerStatuses[0].Ready
 	})
-	if err != nil {
-		step.Fail(err)
-		return err
-	} else if pod == nil {
-		return errors.New("cannot locate job pod")
+	if err != nil || pod == nil {
+		return
 	}
 
-	req := r.client.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+	req := n.client.CoreV1().Pods(n.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 		Container: "job",
 		Follow:    true,
 	})
 	reader, err := req.Stream()
 	if err != nil {
-		step.Fail(err)
-		return err
+		fmt.Println(err)
+		return
 	}
 	defer reader.Close()
 
@@ -99,53 +101,71 @@ func (r *Runner) Run(job *Job) error {
 	for scanner.Scan() {
 		logging.Print(scanner.Text())
 	}
-
-	// Get the exit message and code
-	_, status, err := r.getStatus(job)
-	if err != nil {
-		step.Fail(err)
-		return err
-	}
-
-	step.Complete()
-	os.Exit(status)
-	return nil
 }
 
-// ensureNamespace sets up the test namespace
-func (r *Runner) ensureNamespace() error {
+// WaitForExit waits for the job to exit
+func (n *Namespace) WaitForExit(job *Job) (int, error) {
+	_, status, err := n.getStatus(job)
+	if err != nil {
+		return 0, err
+	}
+	return status, nil
+}
+
+// Create creates the cluster
+func (n *Namespace) Create() error {
+	return n.setupNamespace()
+}
+
+// Delete deletes the cluster
+func (n *Namespace) Delete() error {
+	return n.teardownNamespace()
+}
+
+// setupNamespace sets up the test namespace
+func (n *Namespace) setupNamespace() error {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: namespace,
+			Name: n.namespace,
+			Labels: map[string]string{
+				"test": n.namespace,
+			},
 		},
 	}
-	_, err := r.client.CoreV1().Namespaces().Create(ns)
+	step := logging.NewStep(n.namespace, "Setup namespace")
+	step.Start()
+	_, err := n.client.CoreV1().Namespaces().Create(ns)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
-	return r.setupRBAC()
+	return n.setupRBAC()
 }
 
 // setupRBAC sets up role based access controls for the cluster
-func (r *Runner) setupRBAC() error {
-	if err := r.createClusterRole(); err != nil {
+func (n *Namespace) setupRBAC() error {
+	step := logging.NewStep(n.namespace, "Set up RBAC")
+	step.Start()
+	if err := n.createClusterRole(); err != nil {
+		step.Fail(err)
 		return err
 	}
-	if err := r.createClusterRoleBinding(); err != nil {
+	if err := n.createClusterRoleBinding(); err != nil {
+		step.Fail(err)
 		return err
 	}
-	if err := r.createServiceAccount(); err != nil {
+	if err := n.createServiceAccount(); err != nil {
+		step.Fail(err)
 		return err
 	}
+	step.Complete()
 	return nil
 }
 
 // createClusterRole creates the ClusterRole required by the Atomix controller and tests if not yet created
-func (r *Runner) createClusterRole() error {
+func (n *Namespace) createClusterRole() error {
 	role := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace,
-			Namespace: namespace,
+			Name: clusterRole,
 		},
 		Rules: []rbacv1.PolicyRule{
 			{
@@ -220,6 +240,8 @@ func (r *Runner) createClusterRole() error {
 					"rbac.authorization.k8s.io",
 				},
 				Resources: []string{
+					"roles",
+					"rolebindings",
 					"clusterroles",
 					"clusterrolebindings",
 				},
@@ -252,7 +274,7 @@ func (r *Runner) createClusterRole() error {
 			},
 		},
 	}
-	_, err := r.client.RbacV1().ClusterRoles().Create(role)
+	_, err := n.client.RbacV1().ClusterRoles().Create(role)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -260,56 +282,111 @@ func (r *Runner) createClusterRole() error {
 }
 
 // createClusterRoleBinding creates the ClusterRoleBinding required by the test manager
-func (r *Runner) createClusterRoleBinding() error {
-	roleBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace,
-			Namespace: namespace,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      namespace,
-				Namespace: namespace,
+func (n *Namespace) createClusterRoleBinding() error {
+	roleBinding, err := n.client.RbacV1().ClusterRoleBindings().Get(clusterRole, metav1.GetOptions{})
+	if err != nil {
+		if !k8serrors.IsNotFound(err) {
+			return err
+		}
+		roleBinding = &rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: clusterRole,
 			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
-			Name:     namespace,
-			APIGroup: "rbac.authorization.k8s.io",
+			Subjects: []rbacv1.Subject{
+				{
+					Kind:      "ServiceAccount",
+					Name:      n.namespace,
+					Namespace: n.namespace,
+				},
+			},
+			RoleRef: rbacv1.RoleRef{
+				Kind:     "ClusterRole",
+				Name:     clusterRole,
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		}
+		_, err := n.client.RbacV1().ClusterRoleBindings().Create(roleBinding)
+		if err != nil && k8serrors.IsAlreadyExists(err) {
+			return n.createClusterRoleBinding()
+		}
+		return err
+	}
+
+	roleBinding.Subjects = append(roleBinding.Subjects, rbacv1.Subject{
+		Kind:      "ServiceAccount",
+		Name:      n.namespace,
+		Namespace: n.namespace,
+	})
+	_, err = n.client.RbacV1().ClusterRoleBindings().Update(roleBinding)
+	if err != nil && k8serrors.IsConflict(err) {
+		return n.createClusterRoleBinding()
+	}
+	return err
+}
+
+// createServiceAccount creates a ServiceAccount used by the test manager
+func (n *Namespace) createServiceAccount() error {
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      n.namespace,
+			Namespace: n.namespace,
 		},
 	}
-	_, err := r.client.RbacV1().ClusterRoleBindings().Create(roleBinding)
+	_, err := n.client.CoreV1().ServiceAccounts(n.namespace).Create(serviceAccount)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
 	return nil
 }
 
-// createServiceAccount creates a ServiceAccount used by the test manager
-func (r *Runner) createServiceAccount() error {
-	serviceAccount := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      namespace,
-			Namespace: namespace,
-		},
+// teardownNamespace tears down the cluster namespace
+func (n *Namespace) teardownNamespace() error {
+	step := logging.NewStep(n.namespace, "Delete namespace %s", n.namespace)
+	step.Start()
+
+	w, err := n.client.CoreV1().Namespaces().Watch(metav1.ListOptions{
+		LabelSelector: "test=" + n.namespace,
+	})
+	if err != nil {
+		step.Fail(err)
 	}
-	_, err := r.client.CoreV1().ServiceAccounts(namespace).Create(serviceAccount)
-	if err != nil && !k8serrors.IsAlreadyExists(err) {
+
+	err = n.client.CoreV1().Namespaces().Delete(n.namespace, &metav1.DeleteOptions{})
+	if err != nil {
 		return err
 	}
+
+	for event := range w.ResultChan() {
+		switch event.Type {
+		case watch.Deleted:
+			w.Stop()
+		}
+	}
+	step.Complete()
 	return nil
 }
 
 // startJob starts running a test job
-func (r *Runner) startJob(job *Job) error {
+func (n *Namespace) startJob(job *Job) error {
 	step := logging.NewStep(job.ID, "Starting job")
 	step.Start()
-	if err := r.createJob(job); err != nil {
+	if err := n.createJob(job); err != nil {
 		step.Fail(err)
 		return err
 	}
-	if err := r.awaitJobRunning(job); err != nil {
+	if err := n.awaitJobRunning(job); err != nil {
+		step.Fail(err)
+		return err
+	}
+	if err := n.copyContext(job); err != nil {
+		step.Fail(err)
+		return err
+	}
+	if err := n.runJob(job); err != nil {
+		step.Fail(err)
+		return err
+	}
+	if err := n.awaitJobReady(job); err != nil {
 		step.Fail(err)
 		return err
 	}
@@ -318,7 +395,7 @@ func (r *Runner) startJob(job *Job) error {
 }
 
 // createJob creates the job to run tests
-func (r *Runner) createJob(job *Job) error {
+func (n *Namespace) createJob(job *Job) error {
 	step := logging.NewStep(job.ID, "Deploy job coordinator")
 	step.Start()
 
@@ -331,7 +408,7 @@ func (r *Runner) createJob(job *Job) error {
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  "SERVICE_NAMESPACE",
-		Value: namespace,
+		Value: n.namespace,
 	})
 	env = append(env, corev1.EnvVar{
 		Name:  "SERVICE_NAME",
@@ -358,6 +435,18 @@ func (r *Runner) createJob(job *Job) error {
 		},
 	})
 
+	servicePorts := []corev1.ServicePort{
+		{
+			Name: "bootstrap",
+			Port: 6000,
+		},
+	}
+	if n.server {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Name: "test",
+			Port: 5000,
+		})
+	}
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: job.ID,
@@ -370,15 +459,10 @@ func (r *Runner) createJob(job *Job) error {
 			Selector: map[string]string{
 				"job": job.ID,
 			},
-			Ports: []corev1.ServicePort{
-				{
-					Name: "management",
-					Port: 5000,
-				},
-			},
+			Ports: servicePorts,
 		},
 	}
-	if _, err := r.client.CoreV1().Services(namespace).Create(svc); err != nil {
+	if _, err := n.client.CoreV1().Services(n.namespace).Create(svc); err != nil {
 		return err
 	}
 
@@ -388,7 +472,7 @@ func (r *Runner) createJob(job *Job) error {
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      job.ID,
-				Namespace: namespace,
+				Namespace: n.namespace,
 				Annotations: map[string]string{
 					"job":  job.ID,
 					"type": job.Type,
@@ -396,7 +480,7 @@ func (r *Runner) createJob(job *Job) error {
 			},
 			Data: job.Data,
 		}
-		if _, err := r.client.CoreV1().ConfigMaps(namespace).Create(cm); err != nil {
+		if _, err := n.client.CoreV1().ConfigMaps(n.namespace).Create(cm); err != nil {
 			return err
 		}
 		volumes = []corev1.Volume{
@@ -420,12 +504,51 @@ func (r *Runner) createJob(job *Job) error {
 		}
 	}
 
+	containerPorts := []corev1.ContainerPort{
+		{
+			Name:          "bootstrap",
+			ContainerPort: 6000,
+		},
+	}
+	if n.server {
+		containerPorts = append(containerPorts, corev1.ContainerPort{
+			Name:          "test",
+			ContainerPort: 5000,
+		})
+	}
+
+	var readinessProbe *corev1.Probe
+	if n.server {
+		readinessProbe = &corev1.Probe{
+			Handler: corev1.Handler{
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt(5000),
+				},
+			},
+			PeriodSeconds:    1,
+			FailureThreshold: 30,
+		}
+	} else {
+		readinessProbe = &corev1.Probe{
+			Handler: corev1.Handler{
+				Exec: &corev1.ExecAction{
+					Command: []string{
+						"stat",
+						"/tmp/job-ready",
+					},
+				},
+			},
+			PeriodSeconds:    1,
+			FailureThreshold: 30,
+		}
+	}
+
 	zero := int32(0)
 	one := int32(1)
 	batchJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      job.ID,
-			Namespace: namespace,
+			Namespace: n.namespace,
 			Annotations: map[string]string{
 				"job":  job.ID,
 				"type": job.Type,
@@ -443,7 +566,7 @@ func (r *Runner) createJob(job *Job) error {
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: namespace,
+					ServiceAccountName: n.namespace,
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
@@ -452,13 +575,9 @@ func (r *Runner) createJob(job *Job) error {
 							ImagePullPolicy: job.ImagePullPolicy,
 							Args:            job.Args,
 							Env:             env,
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "management",
-									ContainerPort: 5000,
-								},
-							},
-							VolumeMounts: volumeMounts,
+							Ports:           containerPorts,
+							VolumeMounts:    volumeMounts,
+							ReadinessProbe:  readinessProbe,
 						},
 					},
 					Volumes: volumes,
@@ -472,7 +591,7 @@ func (r *Runner) createJob(job *Job) error {
 		batchJob.Spec.ActiveDeadlineSeconds = &timeoutSeconds
 	}
 
-	_, err := r.client.BatchV1().Jobs(namespace).Create(batchJob)
+	_, err := n.client.BatchV1().Jobs(n.namespace).Create(batchJob)
 	if err != nil {
 		step.Fail(err)
 		return err
@@ -482,9 +601,25 @@ func (r *Runner) createJob(job *Job) error {
 }
 
 // awaitJobRunning blocks until the test job creates a pod in the RUNNING state
-func (r *Runner) awaitJobRunning(job *Job) error {
+func (n *Namespace) awaitJobRunning(job *Job) error {
 	for {
-		pod, err := r.getPod(job, func(pod corev1.Pod) bool {
+		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+			return len(pod.Status.ContainerStatuses) > 0 &&
+				pod.Status.ContainerStatuses[0].State.Running != nil
+		})
+		if err != nil {
+			return err
+		} else if pod != nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// awaitJobReady blocks until the test job creates a ready pod
+func (n *Namespace) awaitJobReady(job *Job) error {
+	for {
+		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 			return len(pod.Status.ContainerStatuses) > 0 &&
 				pod.Status.ContainerStatuses[0].Ready
 		})
@@ -497,10 +632,45 @@ func (r *Runner) awaitJobRunning(job *Job) error {
 	}
 }
 
+// copyContext copies the job context to the pod
+func (n *Namespace) copyContext(job *Job) error {
+	if job.Context == "" {
+		return nil
+	}
+
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+		return true
+	})
+	if err != nil {
+		return err
+	}
+
+	opts := &cp.CopyOptions{}
+	args := []string{
+		helm.ContextPath,
+		fmt.Sprintf("%s/%s:%s", pod.Namespace, pod.Name, helm.ContextPath),
+	}
+	return opts.Run(args)
+}
+
+// runJob runs the job
+func (n *Namespace) runJob(job *Job) error {
+	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", n.namespace, job.ID)
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	if err != nil {
+		return err
+	}
+	client := NewJobServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err = client.RunJob(ctx, &RunRequest{})
+	return err
+}
+
 // getStatus gets the status message and exit code of the given pod
-func (r *Runner) getStatus(job *Job) (string, int, error) {
+func (n *Namespace) getStatus(job *Job) (string, int, error) {
 	for {
-		pod, err := r.getPod(job, func(pod corev1.Pod) bool {
+		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 			return len(pod.Status.ContainerStatuses) > 0 &&
 				pod.Status.ContainerStatuses[0].State.Terminated != nil
 		})
@@ -517,8 +687,8 @@ func (r *Runner) getStatus(job *Job) (string, int, error) {
 }
 
 // getPod finds the Pod for the given test
-func (r *Runner) getPod(job *Job, predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
-	pods, err := r.client.CoreV1().Pods(namespace).List(metav1.ListOptions{
+func (n *Namespace) getPod(job *Job, predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
+	pods, err := n.client.CoreV1().Pods(n.namespace).List(metav1.ListOptions{
 		LabelSelector: "job=" + job.ID,
 	})
 	if err != nil {

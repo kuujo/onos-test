@@ -18,7 +18,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/onosproject/onos-test/pkg/cluster"
+	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/logging"
@@ -71,7 +71,7 @@ func (c *Coordinator) Run() error {
 			Args:            c.config.Args,
 			Env:             c.config.Env,
 		}
-		simCluster, err := cluster.NewCluster(jobID)
+		simCluster, err := job.NewNamespace(jobID)
 		if err != nil {
 			return err
 		}
@@ -134,7 +134,7 @@ func newJobID(testID, suite string) string {
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
 	client  *kubernetes.Clientset
-	cluster *cluster.Cluster
+	cluster *job.Namespace
 	config  *Config
 	workers []SimulatorServiceClient
 }
