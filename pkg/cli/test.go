@@ -116,11 +116,7 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create a job coordinator and run the test job
-	coordinator, err := job.NewCoordinator()
-	if err != nil {
-		return err
-	}
-	status, err := coordinator.RunJob(j)
+	status, err := job.NewCoordinator().RunJob(j)
 	if err != nil {
 		return err
 	}

@@ -71,14 +71,9 @@ func (c *Coordinator) Run() error {
 			Args:            c.config.Args,
 			Env:             c.config.Env,
 		}
-		simCluster, err := job.NewNamespace(jobID)
-		if err != nil {
-			return err
-		}
-
 		worker := &WorkerTask{
 			client:  c.client,
-			cluster: simCluster,
+			cluster: job.NewNamespace(jobID),
 			config:  config,
 		}
 		workers[i] = worker

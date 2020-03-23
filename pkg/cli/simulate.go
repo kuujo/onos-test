@@ -16,6 +16,7 @@ package cli
 
 import (
 	"github.com/onosproject/onos-test/pkg/simulation"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 		Env:             env,
 	}
 
-	job := &job.Job{
+	j := &job.Job{
 		ID:              config.ID,
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
@@ -135,9 +136,10 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create a job runner and run the benchmark job
-	runner, err := job.NewRunner()
+	status, err := job.NewCoordinator().RunJob(j)
 	if err != nil {
 		return err
 	}
-	return runner.Run(job)
+	os.Exit(status)
+	return nil
 }

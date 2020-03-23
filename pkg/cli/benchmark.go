@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"os"
 	"time"
 
 	"github.com/onosproject/onos-test/pkg/benchmark"
@@ -107,7 +108,7 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 		MaxLatency:      maxLatency,
 	}
 
-	job := &job.Job{
+	j := &job.Job{
 		ID:              config.ID,
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
@@ -118,9 +119,10 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create a job runner and run the benchmark job
-	runner, err := job.NewRunner()
+	status, err := job.NewCoordinator().RunJob(j)
 	if err != nil {
 		return err
 	}
-	return runner.Run(job)
+	os.Exit(status)
+	return nil
 }

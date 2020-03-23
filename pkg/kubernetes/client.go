@@ -45,6 +45,7 @@ func NewClient(namespace ...string) Client {
 	}
 	return &kubernetesClient{
 		namespace: ns,
+		config:    config,
 		client:    kubernetes.NewForConfigOrDie(config),
 	}
 }
@@ -54,6 +55,9 @@ type Client interface {
 	// Namespace returns the client namespace
 	Namespace() string
 
+	// Config returns the Kubernetes REST client configuration
+	Config() *rest.Config
+
 	// Clientset returns the client's Clientset
 	Clientset() *kubernetes.Clientset
 }
@@ -61,11 +65,16 @@ type Client interface {
 // kubernetesClient is an implementation of the Kubernetes Client interface
 type kubernetesClient struct {
 	namespace string
+	config    *rest.Config
 	client    *kubernetes.Clientset
 }
 
 func (c *kubernetesClient) Namespace() string {
 	return c.namespace
+}
+
+func (c *kubernetesClient) Config() *rest.Config {
+	return c.config
 }
 
 func (c *kubernetesClient) Clientset() *kubernetes.Clientset {

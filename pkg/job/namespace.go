@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/helm"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
+	"github.com/onosproject/onos-test/pkg/util/copy"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
 	batchv1 "k8s.io/api/batch/v1"
@@ -29,8 +30,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/kubernetes/pkg/kubectl/cmd/cp"
 	"time"
 )
 
@@ -44,17 +43,15 @@ func NewNamespace(namespace string) *Namespace {
 // newRunner returns a new job runner
 func newRunner(namespace string, server bool) *Namespace {
 	return &Namespace{
-		client:    kube.NewClient(namespace).Clientset(),
-		namespace: namespace,
-		server:    server,
+		Client: kube.NewClient(namespace),
+		server: server,
 	}
 }
 
 // Namespace manages test jobs within a namespace
 type Namespace struct {
-	client    *kubernetes.Clientset
-	namespace string
-	server    bool
+	kube.Client
+	server bool
 }
 
 // Run runs the given job
@@ -85,7 +82,7 @@ func (n *Namespace) streamLogs(job *Job) {
 		return
 	}
 
-	req := n.client.CoreV1().Pods(n.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+	req := n.Clientset().CoreV1().Pods(n.Namespace()).GetLogs(pod.Name, &corev1.PodLogOptions{
 		Container: "job",
 		Follow:    true,
 	})
@@ -126,15 +123,15 @@ func (n *Namespace) Delete() error {
 func (n *Namespace) setupNamespace() error {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: n.namespace,
+			Name: n.Namespace(),
 			Labels: map[string]string{
-				"test": n.namespace,
+				"test": n.Namespace(),
 			},
 		},
 	}
-	step := logging.NewStep(n.namespace, "Setup namespace")
+	step := logging.NewStep(n.Namespace(), "Setup namespace")
 	step.Start()
-	_, err := n.client.CoreV1().Namespaces().Create(ns)
+	_, err := n.Clientset().CoreV1().Namespaces().Create(ns)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -143,7 +140,7 @@ func (n *Namespace) setupNamespace() error {
 
 // setupRBAC sets up role based access controls for the cluster
 func (n *Namespace) setupRBAC() error {
-	step := logging.NewStep(n.namespace, "Set up RBAC")
+	step := logging.NewStep(n.Namespace(), "Set up RBAC")
 	step.Start()
 	if err := n.createClusterRole(); err != nil {
 		step.Fail(err)
@@ -274,7 +271,7 @@ func (n *Namespace) createClusterRole() error {
 			},
 		},
 	}
-	_, err := n.client.RbacV1().ClusterRoles().Create(role)
+	_, err := n.Clientset().RbacV1().ClusterRoles().Create(role)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -283,7 +280,7 @@ func (n *Namespace) createClusterRole() error {
 
 // createClusterRoleBinding creates the ClusterRoleBinding required by the test manager
 func (n *Namespace) createClusterRoleBinding() error {
-	roleBinding, err := n.client.RbacV1().ClusterRoleBindings().Get(clusterRole, metav1.GetOptions{})
+	roleBinding, err := n.Clientset().RbacV1().ClusterRoleBindings().Get(clusterRole, metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
 			return err
@@ -295,8 +292,8 @@ func (n *Namespace) createClusterRoleBinding() error {
 			Subjects: []rbacv1.Subject{
 				{
 					Kind:      "ServiceAccount",
-					Name:      n.namespace,
-					Namespace: n.namespace,
+					Name:      n.Namespace(),
+					Namespace: n.Namespace(),
 				},
 			},
 			RoleRef: rbacv1.RoleRef{
@@ -305,7 +302,7 @@ func (n *Namespace) createClusterRoleBinding() error {
 				APIGroup: "rbac.authorization.k8s.io",
 			},
 		}
-		_, err := n.client.RbacV1().ClusterRoleBindings().Create(roleBinding)
+		_, err := n.Clientset().RbacV1().ClusterRoleBindings().Create(roleBinding)
 		if err != nil && k8serrors.IsAlreadyExists(err) {
 			return n.createClusterRoleBinding()
 		}
@@ -314,10 +311,10 @@ func (n *Namespace) createClusterRoleBinding() error {
 
 	roleBinding.Subjects = append(roleBinding.Subjects, rbacv1.Subject{
 		Kind:      "ServiceAccount",
-		Name:      n.namespace,
-		Namespace: n.namespace,
+		Name:      n.Namespace(),
+		Namespace: n.Namespace(),
 	})
-	_, err = n.client.RbacV1().ClusterRoleBindings().Update(roleBinding)
+	_, err = n.Clientset().RbacV1().ClusterRoleBindings().Update(roleBinding)
 	if err != nil && k8serrors.IsConflict(err) {
 		return n.createClusterRoleBinding()
 	}
@@ -328,11 +325,11 @@ func (n *Namespace) createClusterRoleBinding() error {
 func (n *Namespace) createServiceAccount() error {
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      n.namespace,
-			Namespace: n.namespace,
+			Name:      n.Namespace(),
+			Namespace: n.Namespace(),
 		},
 	}
-	_, err := n.client.CoreV1().ServiceAccounts(n.namespace).Create(serviceAccount)
+	_, err := n.Clientset().CoreV1().ServiceAccounts(n.Namespace()).Create(serviceAccount)
 	if err != nil && !k8serrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -341,17 +338,17 @@ func (n *Namespace) createServiceAccount() error {
 
 // teardownNamespace tears down the cluster namespace
 func (n *Namespace) teardownNamespace() error {
-	step := logging.NewStep(n.namespace, "Delete namespace %s", n.namespace)
+	step := logging.NewStep(n.Namespace(), "Delete namespace %s", n.Namespace())
 	step.Start()
 
-	w, err := n.client.CoreV1().Namespaces().Watch(metav1.ListOptions{
-		LabelSelector: "test=" + n.namespace,
+	w, err := n.Clientset().CoreV1().Namespaces().Watch(metav1.ListOptions{
+		LabelSelector: "test=" + n.Namespace(),
 	})
 	if err != nil {
 		step.Fail(err)
 	}
 
-	err = n.client.CoreV1().Namespaces().Delete(n.namespace, &metav1.DeleteOptions{})
+	err = n.Clientset().CoreV1().Namespaces().Delete(n.Namespace(), &metav1.DeleteOptions{})
 	if err != nil {
 		return err
 	}
@@ -408,7 +405,7 @@ func (n *Namespace) createJob(job *Job) error {
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  "SERVICE_NAMESPACE",
-		Value: n.namespace,
+		Value: n.Namespace(),
 	})
 	env = append(env, corev1.EnvVar{
 		Name:  "SERVICE_NAME",
@@ -462,7 +459,7 @@ func (n *Namespace) createJob(job *Job) error {
 			Ports: servicePorts,
 		},
 	}
-	if _, err := n.client.CoreV1().Services(n.namespace).Create(svc); err != nil {
+	if _, err := n.Clientset().CoreV1().Services(n.Namespace()).Create(svc); err != nil {
 		return err
 	}
 
@@ -472,7 +469,7 @@ func (n *Namespace) createJob(job *Job) error {
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      job.ID,
-				Namespace: n.namespace,
+				Namespace: n.Namespace(),
 				Annotations: map[string]string{
 					"job":  job.ID,
 					"type": job.Type,
@@ -480,7 +477,7 @@ func (n *Namespace) createJob(job *Job) error {
 			},
 			Data: job.Data,
 		}
-		if _, err := n.client.CoreV1().ConfigMaps(n.namespace).Create(cm); err != nil {
+		if _, err := n.Clientset().CoreV1().ConfigMaps(n.Namespace()).Create(cm); err != nil {
 			return err
 		}
 		volumes = []corev1.Volume{
@@ -548,7 +545,7 @@ func (n *Namespace) createJob(job *Job) error {
 	batchJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      job.ID,
-			Namespace: n.namespace,
+			Namespace: n.Namespace(),
 			Annotations: map[string]string{
 				"job":  job.ID,
 				"type": job.Type,
@@ -566,7 +563,7 @@ func (n *Namespace) createJob(job *Job) error {
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: n.namespace,
+					ServiceAccountName: n.Namespace(),
 					RestartPolicy:      corev1.RestartPolicyNever,
 					Containers: []corev1.Container{
 						{
@@ -591,7 +588,7 @@ func (n *Namespace) createJob(job *Job) error {
 		batchJob.Spec.ActiveDeadlineSeconds = &timeoutSeconds
 	}
 
-	_, err := n.client.BatchV1().Jobs(n.namespace).Create(batchJob)
+	_, err := n.Clientset().BatchV1().Jobs(n.Namespace()).Create(batchJob)
 	if err != nil {
 		step.Fail(err)
 		return err
@@ -645,17 +642,16 @@ func (n *Namespace) copyContext(job *Job) error {
 		return err
 	}
 
-	opts := &cp.CopyOptions{}
-	args := []string{
-		helm.ContextPath,
-		fmt.Sprintf("%s/%s:%s", pod.Namespace, pod.Name, helm.ContextPath),
-	}
-	return opts.Run(args)
+	return copyutil.Copy(n).
+		From(job.Context).
+		To(helm.ContextPath).
+		Pod(pod.Name).
+		Do()
 }
 
 // runJob runs the job
 func (n *Namespace) runJob(job *Job) error {
-	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", n.namespace, job.ID)
+	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", n.Namespace(), job.ID)
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		return err
@@ -688,7 +684,7 @@ func (n *Namespace) getStatus(job *Job) (string, int, error) {
 
 // getPod finds the Pod for the given test
 func (n *Namespace) getPod(job *Job, predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
-	pods, err := n.client.CoreV1().Pods(n.namespace).List(metav1.ListOptions{
+	pods, err := n.Clientset().CoreV1().Pods(n.Namespace()).List(metav1.ListOptions{
 		LabelSelector: "job=" + job.ID,
 	})
 	if err != nil {
