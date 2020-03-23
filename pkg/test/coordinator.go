@@ -64,9 +64,9 @@ func (c *Coordinator) Run() error {
 				Iterations:      c.config.Iterations,
 			}
 			worker := &WorkerTask{
-				client:    c.client,
-				namespace: job.NewNamespace(config.ID),
-				config:    config,
+				client: c.client,
+				runner: job.NewNamespace(config.ID),
+				config: config,
 			}
 			workers[i] = worker
 		}
@@ -125,14 +125,14 @@ func newJobID(testID, suite string) string {
 
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
-	client    *kubernetes.Clientset
-	namespace *job.Namespace
-	config    *Config
+	client *kubernetes.Clientset
+	runner *job.Runner
+	config *Config
 }
 
 // Run runs the worker job
 func (t *WorkerTask) Run() (int, error) {
-	if err := t.namespace.Create(); err != nil {
+	if err := t.runner.CreateNamespace(); err != nil {
 		return 0, err
 	}
 
@@ -158,7 +158,7 @@ func (t *WorkerTask) Run() (int, error) {
 		Type:            "test",
 	}
 
-	if err := t.namespace.StartJob(job); err != nil {
+	if err := t.runner.StartJob(job); err != nil {
 		return 0, err
 	}
 
@@ -173,10 +173,10 @@ func (t *WorkerTask) Run() (int, error) {
 		return 0, err
 	}
 
-	status, err := t.namespace.WaitForExit(job)
+	status, err := t.runner.WaitForExit(job)
 	if err != nil {
 		return 0, err
 	}
-	_ = t.namespace.Delete()
+	_ = t.runner.DeleteNamespace()
 	return status, err
 }

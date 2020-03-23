@@ -116,7 +116,11 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create a job coordinator and run the test job
-	status, err := job.NewCoordinator().RunJob(j)
+	coordinator := job.NewCoordinator()
+	if err := coordinator.CreateNamespace(); err != nil {
+		return err
+	}
+	status, err := coordinator.RunJob(j)
 	if err != nil {
 		return err
 	}

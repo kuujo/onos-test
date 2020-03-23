@@ -119,7 +119,11 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create a job runner and run the benchmark job
-	status, err := job.NewCoordinator().RunJob(j)
+	coordinator := job.NewCoordinator()
+	if err := coordinator.CreateNamespace(); err != nil {
+		return err
+	}
+	status, err := coordinator.RunJob(j)
 	if err != nil {
 		return err
 	}

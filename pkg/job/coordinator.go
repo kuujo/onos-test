@@ -17,6 +17,6 @@ package job
 const namespace = "kube-test"
 
 // NewCoordinator returns a new test job coordinator
-func NewCoordinator() *Namespace {
+func NewCoordinator() *Runner {
 	return newRunner(namespace, false)
 }

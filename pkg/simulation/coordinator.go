@@ -72,9 +72,9 @@ func (c *Coordinator) Run() error {
 			Env:             c.config.Env,
 		}
 		worker := &WorkerTask{
-			client:  c.client,
-			cluster: job.NewNamespace(jobID),
-			config:  config,
+			client: c.client,
+			runner: job.NewNamespace(jobID),
+			config: config,
 		}
 		workers[i] = worker
 	}
@@ -129,7 +129,7 @@ func newJobID(testID, suite string) string {
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
 	client  *kubernetes.Clientset
-	cluster *job.Namespace
+	runner  *job.Runner
 	config  *Config
 	workers []SimulatorServiceClient
 }
@@ -150,7 +150,7 @@ func (t *WorkerTask) Run() (int, error) {
 
 // start starts the test job
 func (t *WorkerTask) run() error {
-	if err := t.cluster.Create(); err != nil {
+	if err := t.runner.CreateNamespace(); err != nil {
 		return err
 	}
 	if err := t.createWorkers(); err != nil {
@@ -503,5 +503,5 @@ func (t *WorkerTask) stopSimulator(simulator int, client SimulatorServiceClient)
 
 // tearDown tears down the job
 func (t *WorkerTask) tearDown() error {
-	return t.cluster.Delete()
+	return t.runner.DeleteNamespace()
 }

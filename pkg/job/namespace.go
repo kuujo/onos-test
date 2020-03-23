@@ -36,26 +36,26 @@ import (
 const clusterRole = "kube-test-cluster"
 
 // NewNamespace returns a new job namespace
-func NewNamespace(namespace string) *Namespace {
+func NewNamespace(namespace string) *Runner {
 	return newRunner(namespace, true)
 }
 
 // newRunner returns a new job runner
-func newRunner(namespace string, server bool) *Namespace {
-	return &Namespace{
+func newRunner(namespace string, server bool) *Runner {
+	return &Runner{
 		Client: kube.NewClient(namespace),
 		server: server,
 	}
 }
 
-// Namespace manages test jobs within a namespace
-type Namespace struct {
+// Runner manages test jobs within a namespace
+type Runner struct {
 	kube.Client
 	server bool
 }
 
 // Run runs the given job
-func (n *Namespace) RunJob(job *Job) (int, error) {
+func (n *Runner) RunJob(job *Job) (int, error) {
 	if err := n.StartJob(job); err != nil {
 		return 0, err
 	}
@@ -63,7 +63,7 @@ func (n *Namespace) RunJob(job *Job) (int, error) {
 }
 
 // StartJob starts the given job
-func (n *Namespace) StartJob(job *Job) error {
+func (n *Runner) StartJob(job *Job) error {
 	if err := n.startJob(job); err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func (n *Namespace) StartJob(job *Job) error {
 }
 
 // streamLogs streams logs from the given pod
-func (n *Namespace) streamLogs(job *Job) {
+func (n *Runner) streamLogs(job *Job) {
 	// Get the stream of logs for the pod
 	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 		return len(pod.Status.ContainerStatuses) > 0 &&
@@ -101,7 +101,7 @@ func (n *Namespace) streamLogs(job *Job) {
 }
 
 // WaitForExit waits for the job to exit
-func (n *Namespace) WaitForExit(job *Job) (int, error) {
+func (n *Runner) WaitForExit(job *Job) (int, error) {
 	_, status, err := n.getStatus(job)
 	if err != nil {
 		return 0, err
@@ -109,18 +109,18 @@ func (n *Namespace) WaitForExit(job *Job) (int, error) {
 	return status, nil
 }
 
-// Create creates the cluster
-func (n *Namespace) Create() error {
+// CreateNamespace creates the namespace
+func (n *Runner) CreateNamespace() error {
 	return n.setupNamespace()
 }
 
-// Delete deletes the cluster
-func (n *Namespace) Delete() error {
+// DeleteNamespace deletes the namespace
+func (n *Runner) DeleteNamespace() error {
 	return n.teardownNamespace()
 }
 
 // setupNamespace sets up the test namespace
-func (n *Namespace) setupNamespace() error {
+func (n *Runner) setupNamespace() error {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: n.Namespace(),
@@ -139,7 +139,7 @@ func (n *Namespace) setupNamespace() error {
 }
 
 // setupRBAC sets up role based access controls for the cluster
-func (n *Namespace) setupRBAC() error {
+func (n *Runner) setupRBAC() error {
 	step := logging.NewStep(n.Namespace(), "Set up RBAC")
 	step.Start()
 	if err := n.createClusterRole(); err != nil {
@@ -159,7 +159,7 @@ func (n *Namespace) setupRBAC() error {
 }
 
 // createClusterRole creates the ClusterRole required by the Atomix controller and tests if not yet created
-func (n *Namespace) createClusterRole() error {
+func (n *Runner) createClusterRole() error {
 	role := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: clusterRole,
@@ -279,7 +279,7 @@ func (n *Namespace) createClusterRole() error {
 }
 
 // createClusterRoleBinding creates the ClusterRoleBinding required by the test manager
-func (n *Namespace) createClusterRoleBinding() error {
+func (n *Runner) createClusterRoleBinding() error {
 	roleBinding, err := n.Clientset().RbacV1().ClusterRoleBindings().Get(clusterRole, metav1.GetOptions{})
 	if err != nil {
 		if !k8serrors.IsNotFound(err) {
@@ -322,7 +322,7 @@ func (n *Namespace) createClusterRoleBinding() error {
 }
 
 // createServiceAccount creates a ServiceAccount used by the test manager
-func (n *Namespace) createServiceAccount() error {
+func (n *Runner) createServiceAccount() error {
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      n.Namespace(),
@@ -337,7 +337,7 @@ func (n *Namespace) createServiceAccount() error {
 }
 
 // teardownNamespace tears down the cluster namespace
-func (n *Namespace) teardownNamespace() error {
+func (n *Runner) teardownNamespace() error {
 	step := logging.NewStep(n.Namespace(), "Delete namespace %s", n.Namespace())
 	step.Start()
 
@@ -364,7 +364,7 @@ func (n *Namespace) teardownNamespace() error {
 }
 
 // startJob starts running a test job
-func (n *Namespace) startJob(job *Job) error {
+func (n *Runner) startJob(job *Job) error {
 	step := logging.NewStep(job.ID, "Starting job")
 	step.Start()
 	if err := n.createJob(job); err != nil {
@@ -392,7 +392,7 @@ func (n *Namespace) startJob(job *Job) error {
 }
 
 // createJob creates the job to run tests
-func (n *Namespace) createJob(job *Job) error {
+func (n *Runner) createJob(job *Job) error {
 	step := logging.NewStep(job.ID, "Deploy job coordinator")
 	step.Start()
 
@@ -598,7 +598,7 @@ func (n *Namespace) createJob(job *Job) error {
 }
 
 // awaitJobRunning blocks until the test job creates a pod in the RUNNING state
-func (n *Namespace) awaitJobRunning(job *Job) error {
+func (n *Runner) awaitJobRunning(job *Job) error {
 	for {
 		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 			return len(pod.Status.ContainerStatuses) > 0 &&
@@ -614,7 +614,7 @@ func (n *Namespace) awaitJobRunning(job *Job) error {
 }
 
 // awaitJobReady blocks until the test job creates a ready pod
-func (n *Namespace) awaitJobReady(job *Job) error {
+func (n *Runner) awaitJobReady(job *Job) error {
 	for {
 		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 			return len(pod.Status.ContainerStatuses) > 0 &&
@@ -630,7 +630,7 @@ func (n *Namespace) awaitJobReady(job *Job) error {
 }
 
 // copyContext copies the job context to the pod
-func (n *Namespace) copyContext(job *Job) error {
+func (n *Runner) copyContext(job *Job) error {
 	if job.Context == "" {
 		return nil
 	}
@@ -650,7 +650,7 @@ func (n *Namespace) copyContext(job *Job) error {
 }
 
 // runJob runs the job
-func (n *Namespace) runJob(job *Job) error {
+func (n *Runner) runJob(job *Job) error {
 	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", n.Namespace(), job.ID)
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
@@ -664,7 +664,7 @@ func (n *Namespace) runJob(job *Job) error {
 }
 
 // getStatus gets the status message and exit code of the given pod
-func (n *Namespace) getStatus(job *Job) (string, int, error) {
+func (n *Runner) getStatus(job *Job) (string, int, error) {
 	for {
 		pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 			return len(pod.Status.ContainerStatuses) > 0 &&
@@ -683,7 +683,7 @@ func (n *Namespace) getStatus(job *Job) (string, int, error) {
 }
 
 // getPod finds the Pod for the given test
-func (n *Namespace) getPod(job *Job, predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
+func (n *Runner) getPod(job *Job, predicate func(pod corev1.Pod) bool) (*corev1.Pod, error) {
 	pods, err := n.Clientset().CoreV1().Pods(n.Namespace()).List(metav1.ListOptions{
 		LabelSelector: "job=" + job.ID,
 	})
