@@ -54,15 +54,13 @@ func (c *Coordinator) Run() error {
 		workers := make([]*WorkerTask, len(suites))
 		for i, suite := range suites {
 			jobID := newJobID(c.config.ID+"-"+strconv.Itoa(iteration), suite)
-			env := c.config.Env
-			env[testTypeEnv] = string(testTypeWorker)
 			config := &Config{
 				ID:              jobID,
 				Image:           c.config.Image,
 				ImagePullPolicy: c.config.ImagePullPolicy,
 				Suites:          []string{suite},
 				Tests:           c.config.Tests,
-				Env:             env,
+				Env:             c.config.Env,
 				Context:         c.config.Context,
 				Iterations:      c.config.Iterations,
 			}
@@ -150,13 +148,16 @@ func (t *WorkerTask) Run() (int, error) {
 		}
 	}
 
+	env := t.config.Env
+	env[testTypeEnv] = string(testTypeWorker)
+
 	job := &job.Job{
 		ID:              t.config.ID,
 		Image:           t.config.Image,
 		ImagePullPolicy: t.config.ImagePullPolicy,
 		Context:         t.config.Context,
 		Data:            data,
-		Env:             t.config.ToEnv(),
+		Env:             env,
 		Timeout:         t.config.Timeout,
 		Type:            "test",
 	}

@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/helm"
-	"github.com/onosproject/onos-test/pkg/job"
+	jobs "github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/async"
@@ -63,11 +63,6 @@ func (c *Coordinator) Run() error {
 	workers := make([]*WorkerTask, len(suites))
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
-		env := c.config.Env
-		env[kube.NamespaceEnv] = c.config.ID
-		env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
-		env[benchmarkWorkerEnv] = fmt.Sprintf("%d", i)
-		env[benchmarkJobEnv] = c.config.ID
 		config := &Config{
 			ID:              jobID,
 			Image:           c.config.Image,
@@ -81,11 +76,11 @@ func (c *Coordinator) Run() error {
 			Duration:        c.config.Duration,
 			MaxLatency:      c.config.MaxLatency,
 			Args:            c.config.Args,
-			Env:             env,
+			Env:             c.config.Env,
 		}
 		worker := &WorkerTask{
 			client: c.client,
-			runner: job.NewNamespace(jobID),
+			runner: jobs.NewNamespace(jobID),
 			config: config,
 		}
 		workers[i] = worker
@@ -141,7 +136,7 @@ func newJobID(testID, suite string) string {
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
 	client  *kubernetes.Clientset
-	runner  *job.Runner
+	runner  *jobs.Runner
 	config  *Config
 	workers []WorkerServiceClient
 }
@@ -200,13 +195,19 @@ func (t *WorkerTask) createWorker(worker int) error {
 		}
 	}
 
-	job := &job.Job{
+	env := t.config.Env
+	env[kube.NamespaceEnv] = t.config.ID
+	env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
+	env[benchmarkWorkerEnv] = fmt.Sprintf("%d", worker)
+	env[benchmarkJobEnv] = t.config.ID
+
+	job := &jobs.Job{
 		ID:              t.config.ID,
 		Image:           t.config.Image,
 		ImagePullPolicy: t.config.ImagePullPolicy,
 		Context:         t.config.Context,
 		Data:            data,
-		Env:             t.config.ToEnv(),
+		Env:             env,
 		Timeout:         t.config.Timeout,
 		Type:            "benchmark",
 	}

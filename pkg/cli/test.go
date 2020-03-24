@@ -1,4 +1,4 @@
-// Copyright 2019-present Open Networking Foundation.
+// Copyright 2020-present Open Networking Foundation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import (
 
 	"github.com/onosproject/onos-test/pkg/util/logging"
 
-	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/test"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
@@ -96,36 +95,16 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 		ID:              random.NewPetName(2),
 		Image:           image,
 		ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+		Context:         context,
+		Data:            data,
+		Env:             env,
 		Suites:          suites,
 		Tests:           testNames,
-		Env:             env,
 		Timeout:         timeout,
 		Iterations:      iterations,
 		Verbose:         logging.GetVerbose(),
 	}
-
-	j := &job.Job{
-		ID:              config.ID,
-		Image:           image,
-		ImagePullPolicy: corev1.PullPolicy(pullPolicy),
-		Context:         context,
-		Data:            data,
-		Env:             config.ToEnv(),
-		Timeout:         timeout,
-		Type:            "test",
-	}
-
-	// Create a job coordinator and run the test job
-	coordinator := job.NewCoordinator()
-	if err := coordinator.CreateNamespace(); err != nil {
-		return err
-	}
-	status, err := coordinator.RunJob(j)
-	if err != nil {
-		return err
-	}
-	os.Exit(status)
-	return nil
+	return test.Run(config)
 }
 
 func parseEnv(values []string) (map[string]string, error) {

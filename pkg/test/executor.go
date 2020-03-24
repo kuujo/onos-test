@@ -15,31 +15,51 @@
 package test
 
 import (
-	"github.com/onosproject/onos-test/pkg/job"
+	jobs "github.com/onosproject/onos-test/pkg/job"
 	"os"
 )
 
 // The executor is the entrypoint for test images. It takes the input and environment and runs
 // the image in the appropriate context according to the arguments.
 
+// Run runs the test
+func Run(config *Config) error {
+	job := &jobs.Job{
+		ID:              config.ID,
+		Image:           config.Image,
+		ImagePullPolicy: config.ImagePullPolicy,
+		Context:         config.Context,
+		Data:            config.Data,
+		Env:             config.Env,
+		Timeout:         config.Timeout,
+		Type:            "test",
+	}
+	if err := job.MarshalConfig(config); err != nil {
+		return err
+	}
+	return jobs.Run(job)
+}
+
 // Main runs a test
 func Main() {
-	if err := Run(); err != nil {
+	if err := run(); err != nil {
 		println("Test run failed " + err.Error())
 		os.Exit(1)
 	}
 	os.Exit(0)
 }
 
-// Run runs a test
-func Run() error {
-	ctx, err := job.Bootstrap()
+// run runs a test
+func run() error {
+	job, err := jobs.Bootstrap()
 	if err != nil {
 		return err
 	}
 
-	config := GetConfigFromEnv()
-	config.Context = ctx
+	config := &Config{}
+	if err := job.UnmarshalConfig(config); err != nil {
+		return err
+	}
 
 	testType := getTestType()
 	switch testType {

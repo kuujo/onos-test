@@ -1,4 +1,4 @@
-// Copyright 2019-present Open Networking Foundation.
+// Copyright 2020-present Open Networking Foundation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,11 +15,10 @@
 package cli
 
 import (
-	"os"
 	"time"
 
 	"github.com/onosproject/onos-test/pkg/benchmark"
-	"github.com/onosproject/onos-test/pkg/job"
+	jobs "github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -92,41 +91,31 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	config := &benchmark.Config{
+	job := &jobs.Job{
 		ID:              random.NewPetName(2),
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
-		Suite:           suite,
-		Benchmark:       benchmarkName,
-		Workers:         workers,
-		Parallelism:     parallelism,
-		Requests:        requests,
-		Duration:        duration,
-		Args:            args,
-		Env:             env,
-		Timeout:         timeout,
-		MaxLatency:      maxLatency,
-	}
-
-	j := &job.Job{
-		ID:              config.ID,
-		Image:           image,
-		ImagePullPolicy: pullPolicy,
 		Data:            data,
-		Env:             config.ToEnv(),
+		Env:             env,
 		Timeout:         timeout,
 		Type:            "benchmark",
 	}
 
-	// Create a job runner and run the benchmark job
-	coordinator := job.NewCoordinator()
-	if err := coordinator.CreateNamespace(); err != nil {
-		return err
+	config := &benchmark.Config{
+		Suite:       suite,
+		Benchmark:   benchmarkName,
+		Workers:     workers,
+		Parallelism: parallelism,
+		Requests:    requests,
+		Duration:    duration,
+		Args:        args,
+		Timeout:     timeout,
+		MaxLatency:  maxLatency,
 	}
-	status, err := coordinator.RunJob(j)
+
+	err = job.MarshalConfig(config)
 	if err != nil {
 		return err
 	}
-	os.Exit(status)
-	return nil
+	return jobs.Run(job)
 }

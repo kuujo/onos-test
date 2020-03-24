@@ -16,8 +16,8 @@ package job
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
-	"github.com/onosproject/onos-test/pkg/helm"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/util/files"
 	"github.com/onosproject/onos-test/pkg/util/logging"
@@ -458,42 +458,47 @@ func (n *Runner) createJob(job *Job) error {
 		}
 	}
 
-	var volumes []corev1.Volume
-	var volumeMounts []corev1.VolumeMount
-	if len(job.Data) > 0 {
-		cm := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      job.ID,
-				Namespace: n.Namespace(),
-				Annotations: map[string]string{
-					"job":  job.ID,
-					"type": job.Type,
-				},
+	json, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      job.ID,
+			Namespace: n.Namespace(),
+			Annotations: map[string]string{
+				"job":  job.ID,
+				"type": job.Type,
 			},
-			Data: job.Data,
-		}
-		if _, err := n.Clientset().CoreV1().ConfigMaps(n.Namespace()).Create(cm); err != nil {
-			return err
-		}
-		volumes = []corev1.Volume{
-			{
-				Name: "config",
-				VolumeSource: corev1.VolumeSource{
-					ConfigMap: &corev1.ConfigMapVolumeSource{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: job.ID,
-						},
+		},
+		Data: map[string]string{
+			configFile: string(json),
+		},
+	}
+	if _, err := n.Clientset().CoreV1().ConfigMaps(n.Namespace()).Create(cm); err != nil {
+		return err
+	}
+
+	volumes := []corev1.Volume{
+		{
+			Name: "config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: job.ID,
 					},
 				},
 			},
-		}
-		volumeMounts = []corev1.VolumeMount{
-			{
-				Name:      "config",
-				MountPath: helm.ValuesPath,
-				ReadOnly:  true,
-			},
-		}
+		},
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "config",
+			MountPath: configPath,
+			ReadOnly:  true,
+		},
 	}
 
 	var containerPorts []corev1.ContainerPort
@@ -580,7 +585,7 @@ func (n *Runner) createJob(job *Job) error {
 		batchJob.Spec.ActiveDeadlineSeconds = &timeoutSeconds
 	}
 
-	_, err := n.Clientset().BatchV1().Jobs(n.Namespace()).Create(batchJob)
+	_, err = n.Clientset().BatchV1().Jobs(n.Namespace()).Create(batchJob)
 	if err != nil {
 		step.Fail(err)
 		return err

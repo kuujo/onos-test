@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/helm"
-	"github.com/onosproject/onos-test/pkg/job"
+	jobs "github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/async"
@@ -58,11 +58,6 @@ func (c *Coordinator) Run() error {
 	workers := make([]*WorkerTask, len(suites))
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
-		env := c.config.Env
-		env[kube.NamespaceEnv] = c.config.ID
-		env[simulationTypeEnv] = string(simulationTypeWorker)
-		env[simulationWorkerEnv] = fmt.Sprintf("%d", i)
-		env[simulationJobEnv] = c.config.ID
 		config := &Config{
 			ID:              jobID,
 			Image:           c.config.Image,
@@ -74,11 +69,11 @@ func (c *Coordinator) Run() error {
 			Rates:           c.config.Rates,
 			Jitter:          c.config.Jitter,
 			Args:            c.config.Args,
-			Env:             env,
+			Env:             c.config.Env,
 		}
 		worker := &WorkerTask{
 			client: c.client,
-			runner: job.NewNamespace(jobID),
+			runner: jobs.NewNamespace(jobID),
 			config: config,
 		}
 		workers[i] = worker
@@ -134,7 +129,7 @@ func newJobID(testID, suite string) string {
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
 	client  *kubernetes.Clientset
-	runner  *job.Runner
+	runner  *jobs.Runner
 	config  *Config
 	workers []SimulatorServiceClient
 }
@@ -199,13 +194,19 @@ func (t *WorkerTask) createWorker(worker int) error {
 		}
 	}
 
-	job := &job.Job{
+	env := t.config.Env
+	env[kube.NamespaceEnv] = t.config.ID
+	env[simulationTypeEnv] = string(simulationTypeWorker)
+	env[simulationWorkerEnv] = fmt.Sprintf("%d", worker)
+	env[simulationJobEnv] = t.config.ID
+
+	job := &jobs.Job{
 		ID:              t.config.ID,
 		Image:           t.config.Image,
 		ImagePullPolicy: t.config.ImagePullPolicy,
 		Context:         t.config.Context,
 		Data:            data,
-		Env:             t.config.ToEnv(),
+		Env:             env,
 		Timeout:         t.config.Duration,
 		Type:            "simulation",
 	}
@@ -364,7 +365,6 @@ func (t *WorkerTask) runSimulator(simulator int, client SimulatorServiceClient) 
 func (t *WorkerTask) startSimulator(simulator int, client SimulatorServiceClient) error {
 	request := &SimulatorRequest{
 		Simulation: t.config.Simulation,
-		Register:   getAddress(),
 	}
 	_, err := client.StartSimulator(context.Background(), request)
 	return err
@@ -374,7 +374,6 @@ func (t *WorkerTask) startSimulator(simulator int, client SimulatorServiceClient
 func (t *WorkerTask) stopSimulator(simulator int, client SimulatorServiceClient) error {
 	request := &SimulatorRequest{
 		Simulation: t.config.Simulation,
-		Register:   getAddress(),
 	}
 	_, err := client.StopSimulator(context.Background(), request)
 	return err

@@ -16,12 +16,11 @@ package cli
 
 import (
 	"github.com/onosproject/onos-test/pkg/simulation"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/onosproject/onos-test/pkg/job"
+	jobs "github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -112,38 +111,28 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	config := &simulation.Config{
+	job := &jobs.Job{
 		ID:              random.NewPetName(2),
 		Image:           image,
 		ImagePullPolicy: pullPolicy,
-		Simulation:      sim,
-		Simulators:      workers,
-		Duration:        duration,
-		Rates:           rates,
-		Jitter:          jitters,
-		Args:            args,
-		Env:             env,
-	}
-
-	j := &job.Job{
-		ID:              config.ID,
-		Image:           image,
-		ImagePullPolicy: pullPolicy,
 		Data:            data,
-		Env:             config.ToEnv(),
+		Env:             env,
 		Timeout:         timeout,
 		Type:            "simulation",
 	}
 
-	// Create a job runner and run the benchmark job
-	coordinator := job.NewCoordinator()
-	if err := coordinator.CreateNamespace(); err != nil {
-		return err
+	config := &simulation.Config{
+		Simulation: sim,
+		Simulators: workers,
+		Duration:   duration,
+		Rates:      rates,
+		Jitter:     jitters,
+		Args:       args,
 	}
-	status, err := coordinator.RunJob(j)
+
+	err = job.MarshalConfig(config)
 	if err != nil {
 		return err
 	}
-	os.Exit(status)
-	return nil
+	return jobs.Run(job)
 }

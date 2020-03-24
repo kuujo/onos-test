@@ -15,13 +15,17 @@
 package job
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	corev1 "k8s.io/api/core/v1"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+const configPath = "/etc/onit"
+const configFile = "job.json"
 const readyFile = "/tmp/job-ready"
 
 // Job is a job configuration
@@ -29,6 +33,7 @@ type Job struct {
 	ID              string
 	Image           string
 	ImagePullPolicy corev1.PullPolicy
+	Config          []byte
 	Context         string
 	Data            map[string]string
 	Args            []string
@@ -37,10 +42,23 @@ type Job struct {
 	Type            string
 }
 
+func (j *Job) MarshalConfig(config interface{}) error {
+	bytes, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	j.Config = bytes
+	return nil
+}
+
+func (j *Job) UnmarshalConfig(config interface{}) error {
+	return json.Unmarshal(j.Config, config)
+}
+
 // Bootstrap bootstraps the job
-func Bootstrap() (string, error) {
+func Bootstrap() (*Job, error) {
 	awaitReady()
-	return getContext()
+	return getJob()
 }
 
 // awaitReady waits for the job to become ready
@@ -59,13 +77,37 @@ func isReady() bool {
 	return err == nil && !info.IsDir()
 }
 
+// getJob returns the job configuration
+func getJob() (*Job, error) {
+	file, err := os.Open(filepath.Join(configPath, configFile))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	bytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	job := &Job{}
+	err = json.Unmarshal(bytes, job)
+	if err != nil {
+		return nil, err
+	}
+	ctx, err := getContext()
+	if err != nil {
+		return nil, err
+	}
+	job.Context = ctx
+	return job, nil
+}
+
 // getContext returns the job context
 func getContext() (string, error) {
 	file, err := os.Open(readyFile)
-	defer file.Close()
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 	bytes, err := ioutil.ReadAll(file)
 	if err != nil {
 		return "", err
