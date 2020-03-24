@@ -54,13 +54,15 @@ func (c *Coordinator) Run() error {
 		workers := make([]*WorkerTask, len(suites))
 		for i, suite := range suites {
 			jobID := newJobID(c.config.ID+"-"+strconv.Itoa(iteration), suite)
+			env := c.config.Env
+			env[testContextEnv] = string(testContextWorker)
 			config := &Config{
 				ID:              jobID,
 				Image:           c.config.Image,
 				ImagePullPolicy: c.config.ImagePullPolicy,
 				Suites:          []string{suite},
 				Tests:           c.config.Tests,
-				Env:             c.config.Env,
+				Env:             env,
 				Iterations:      c.config.Iterations,
 			}
 			worker := &WorkerTask{
@@ -168,7 +170,10 @@ func (t *WorkerTask) Run() (int, error) {
 		return 0, err
 	}
 	client := NewWorkerServiceClient(conn)
-	_, err = client.RunTests(context.Background(), &TestRequest{})
+	_, err = client.RunTests(context.Background(), &TestRequest{
+		Suite: t.config.Suites[0],
+		Tests: t.config.Tests,
+	})
 	if err != nil {
 		return 0, err
 	}

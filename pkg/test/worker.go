@@ -51,12 +51,12 @@ func (w *Worker) Run() error {
 func (w *Worker) RunTests(ctx context.Context, request *TestRequest) (*TestResponse, error) {
 	test := registry.GetTestSuite(request.Suite)
 	if test == nil {
-		return nil, fmt.Errorf("unknown test suite %s", w.config.Suites[0])
+		return nil, fmt.Errorf("unknown test suite %s", request.Suite)
 	}
 
 	tests := []testing.InternalTest{
 		{
-			Name: w.config.Suites[0],
+			Name: request.Suite,
 			F: func(t *testing.T) {
 				RunTests(t, test, request.Tests)
 			},
