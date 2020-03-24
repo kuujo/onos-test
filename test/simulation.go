@@ -30,7 +30,7 @@ func (s *ChartSimulationSuite) SetupSimulation(sim *simulation.Simulator) error 
 	return helm.Helm().
 		Chart("/etc/charts/atomix-controller").
 		Release("atomix-controller").
-		Set("namespace", helm.Namespace()).
+		Set("scope", "Namespace").
 		Install(true)
 }
 

@@ -15,21 +15,23 @@
 package benchmark
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
+	"github.com/onosproject/onos-test/pkg/util/async"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
+	"io/ioutil"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"math"
 	"os"
+	"path/filepath"
 	"sync"
 	"text/tabwriter"
 	"time"
@@ -61,19 +63,25 @@ func (c *Coordinator) Run() error {
 	workers := make([]*WorkerTask, len(suites))
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
+		env := c.config.Env
+		env[kube.NamespaceEnv] = c.config.ID
+		env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
+		env[benchmarkWorkerEnv] = fmt.Sprintf("%d", i)
+		env[benchmarkJobEnv] = c.config.ID
 		config := &Config{
 			ID:              jobID,
 			Image:           c.config.Image,
 			ImagePullPolicy: c.config.ImagePullPolicy,
 			Suite:           suite,
 			Benchmark:       c.config.Benchmark,
+			Context:         c.config.Context,
 			Workers:         c.config.Workers,
 			Parallelism:     c.config.Parallelism,
 			Requests:        c.config.Requests,
 			Duration:        c.config.Duration,
 			MaxLatency:      c.config.MaxLatency,
 			Args:            c.config.Args,
-			Env:             c.config.Env,
+			Env:             env,
 		}
 		worker := &WorkerTask{
 			client: c.client,
@@ -176,151 +184,34 @@ func (t *WorkerTask) getWorkerAddress(worker int) string {
 
 // createWorkers creates the benchmark workers
 func (t *WorkerTask) createWorkers() error {
-	for i := 0; i < t.config.Workers; i++ {
-		if err := t.createWorker(i); err != nil {
-			return err
-		}
-	}
-	return t.awaitRunning()
+	return async.IterAsync(t.config.Workers, t.createWorker)
 }
 
 // createWorker creates the given worker
 func (t *WorkerTask) createWorker(worker int) error {
-	env := t.config.ToEnv()
-	env[kube.NamespaceEnv] = t.config.ID
-	env[benchmarkContextEnv] = string(benchmarkContextWorker)
-	env[benchmarkWorkerEnv] = fmt.Sprintf("%d", worker)
-	env[benchmarkJobEnv] = t.config.ID
-
-	envVars := make([]corev1.EnvVar, 0, len(env))
-	for key, value := range env {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  key,
-			Value: value,
-		})
-	}
-
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: getWorkerName(worker),
-			Labels: map[string]string{
-				"benchmark": t.config.ID,
-				"worker":    fmt.Sprintf("%d", worker),
-			},
-		},
-		Spec: corev1.PodSpec{
-			ServiceAccountName: t.config.ID,
-			RestartPolicy:      corev1.RestartPolicyNever,
-			Containers: []corev1.Container{
-				{
-					Name:            "benchmark",
-					Image:           t.config.Image,
-					ImagePullPolicy: t.config.ImagePullPolicy,
-					Env:             envVars,
-					Ports: []corev1.ContainerPort{
-						{
-							Name:          "management",
-							ContainerPort: 5000,
-						},
-					},
-					ReadinessProbe: &corev1.Probe{
-						Handler: corev1.Handler{
-							TCPSocket: &corev1.TCPSocketAction{
-								Port: intstr.FromInt(5000),
-							},
-						},
-						InitialDelaySeconds: 2,
-						PeriodSeconds:       5,
-					},
-				},
-			},
-		},
-	}
-	_, err := t.client.CoreV1().Pods(t.config.ID).Create(pod)
-	if err != nil {
-		return err
-	}
-
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: getWorkerName(worker),
-			Labels: map[string]string{
-				"benchmark": t.config.ID,
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"benchmark": t.config.ID,
-				"worker":    fmt.Sprintf("%d", worker),
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name: "management",
-					Port: 5000,
-				},
-			},
-		},
-	}
-	if _, err := t.client.CoreV1().Services(t.config.ID).Create(svc); err != nil {
-		return err
-	}
-
-	go t.streamWorkerLogs(worker)
-	return nil
-}
-
-// streamWorkerLogs streams the logs from the given worker
-func (t *WorkerTask) streamWorkerLogs(worker int) {
-	for {
-		pod, err := t.getPod(worker)
-		if err != nil || pod == nil {
-			return
-		}
-
-		if len(pod.Status.ContainerStatuses) > 0 &&
-			(pod.Status.ContainerStatuses[0].State.Running != nil ||
-				pod.Status.ContainerStatuses[0].State.Terminated != nil) {
-			req := t.client.CoreV1().Pods(t.config.ID).GetLogs(getWorkerName(worker), &corev1.PodLogOptions{
-				Follow: true,
-			})
-			reader, err := req.Stream()
-			if err != nil {
-				return
-			}
-			defer reader.Close()
-
-			// Stream the logs to stdout
-			scanner := bufio.NewScanner(reader)
-			for scanner.Scan() {
-				logging.Print(scanner.Text())
-			}
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// awaitRunning blocks until the job creates a pod in the RUNNING state
-func (t *WorkerTask) awaitRunning() error {
-	for i := 0; i < t.config.Workers; i++ {
-		if err := t.awaitWorkerRunning(i); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// awaitWorkerRunning blocks until the given worker is running
-func (t *WorkerTask) awaitWorkerRunning(worker int) error {
-	for {
-		pod, err := t.getPod(worker)
+	var data map[string]string
+	if file, err := os.Open(filepath.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
+		bytes, err := ioutil.ReadAll(file)
 		if err != nil {
 			return err
-		} else if pod != nil && len(pod.Status.ContainerStatuses) > 0 && pod.Status.ContainerStatuses[0].Ready {
-			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		data = map[string]string{
+			helm.ValuesFile: string(bytes),
+		}
 	}
+
+	job := &job.Job{
+		ID:              t.config.ID,
+		Image:           t.config.Image,
+		ImagePullPolicy: t.config.ImagePullPolicy,
+		Context:         t.config.Context,
+		Data:            data,
+		Env:             t.config.ToEnv(),
+		Timeout:         t.config.Timeout,
+		Type:            "benchmark",
+	}
+
+	return t.runner.StartJob(job)
 }
 
 // getWorkerConns returns the worker clients for the given benchmark

@@ -32,7 +32,7 @@ func (s *ChartTestSuite) TestLocalInstall(t *testing.T) {
 	atomix := helm.Helm().
 		Chart("atomix-controller").
 		Release("atomix-controller").
-		Set("namespace", helm.Namespace())
+		Set("scope", "Namespace")
 	err := atomix.Install(true)
 	assert.NoError(t, err)
 

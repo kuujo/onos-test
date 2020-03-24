@@ -24,10 +24,10 @@ import (
 	"time"
 )
 
-type simulationContext string
+type simulationType string
 
 const (
-	simulationContextEnv = "SIMULATION_CONTEXT"
+	simulationTypeEnv = "SIMULATION_TYPE"
 
 	simulationJobEnv             = "SIMULATION_JOB"
 	simulationImageEnv           = "SIMULATION_IMAGE"
@@ -42,8 +42,8 @@ const (
 )
 
 const (
-	simulationContextCoordinator simulationContext = "coordinator"
-	simulationContextWorker      simulationContext = "worker"
+	simulationTypeCoordinator simulationType = "coordinator"
+	simulationTypeWorker      simulationType = "worker"
 )
 
 // getAddress returns the service address
@@ -113,6 +113,7 @@ type Config struct {
 	ImagePullPolicy corev1.PullPolicy
 	Simulation      string
 	Simulators      int
+	Context         string
 	Rates           map[string]time.Duration
 	Jitter          map[string]float64
 	Duration        time.Duration
@@ -143,13 +144,13 @@ func (c *Config) ToEnv() map[string]string {
 	return env
 }
 
-// getSimulationContext returns the current simulation context
-func getSimulationContext() simulationContext {
-	context := os.Getenv(simulationContextEnv)
+// getSimulationType returns the current simulation type
+func getSimulationType() simulationType {
+	context := os.Getenv(simulationTypeEnv)
 	if context != "" {
-		return simulationContext(context)
+		return simulationType(context)
 	}
-	return simulationContextCoordinator
+	return simulationTypeCoordinator
 }
 
 // getSimulatorID returns the current simulation worker number

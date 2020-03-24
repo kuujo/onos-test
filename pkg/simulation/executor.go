@@ -15,6 +15,7 @@
 package simulation
 
 import (
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 )
 
@@ -32,12 +33,19 @@ func Main() {
 
 // Run runs a test
 func Run() error {
+	ctx, err := job.Bootstrap()
+	if err != nil {
+		return err
+	}
+
 	config := GetConfigFromEnv()
-	context := getSimulationContext()
-	switch context {
-	case simulationContextCoordinator:
+	config.Context = ctx
+
+	simType := getSimulationType()
+	switch simType {
+	case simulationTypeCoordinator:
 		return runCoordinator(config)
-	case simulationContextWorker:
+	case simulationTypeWorker:
 		return runSimulator(config)
 	}
 	return nil

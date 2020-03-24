@@ -21,6 +21,7 @@ import (
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
 	"net"
+	"os"
 	"reflect"
 	"regexp"
 )
@@ -28,17 +29,25 @@ import (
 // newWorker returns a new benchmark worker
 func newWorker(config *Config) (*Worker, error) {
 	return &Worker{
+		config: config,
 		suites: make(map[string]BenchmarkingSuite),
 	}, nil
 }
 
 // Worker runs a benchmark job
 type Worker struct {
+	config *Config
 	suites map[string]BenchmarkingSuite
 }
 
 // Run runs a benchmark
 func (w *Worker) Run() error {
+	if w.config.Context != "" {
+		if err := os.Chdir(w.config.Context); err != nil {
+			return err
+		}
+	}
+
 	lis, err := net.Listen("tcp", ":5000")
 	if err != nil {
 		return err

@@ -15,6 +15,7 @@
 package benchmark
 
 import (
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 )
 
@@ -32,12 +33,19 @@ func Main() {
 
 // Run runs a test
 func Run() error {
+	ctx, err := job.Bootstrap()
+	if err != nil {
+		return err
+	}
+
 	config := GetConfigFromEnv()
-	context := getBenchmarkContext()
-	switch context {
-	case benchmarkContextCoordinator:
+	config.Context = ctx
+
+	benchType := getBenchmarkType()
+	switch benchType {
+	case benchmarkTypeCoordinator:
 		return runCoordinator(config)
-	case benchmarkContextWorker:
+	case benchmarkTypeWorker:
 		return runWorker(config)
 	}
 	return nil

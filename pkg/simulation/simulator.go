@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"math/rand"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -263,6 +264,12 @@ type simulatorServer struct {
 
 // Run runs a simulation
 func (s *simulatorServer) Run() error {
+	if s.config.Context != "" {
+		if err := os.Chdir(s.config.Context); err != nil {
+			return err
+		}
+	}
+
 	lis, err := net.Listen("tcp", ":5000")
 	if err != nil {
 		return err

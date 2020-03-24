@@ -24,10 +24,10 @@ import (
 	"time"
 )
 
-type benchmarkContext string
+type benchmarkType string
 
 const (
-	benchmarkContextEnv = "BENCHMARK_CONTEXT"
+	benchmarkTypeEnv = "BENCHMARK_TYPE"
 
 	benchmarkJobEnv             = "BENCHMARK_JOB"
 	benchmarkImageEnv           = "BENCHMARK_IMAGE"
@@ -44,8 +44,8 @@ const (
 )
 
 const (
-	benchmarkContextCoordinator benchmarkContext = "coordinator"
-	benchmarkContextWorker      benchmarkContext = "worker"
+	benchmarkTypeCoordinator benchmarkType = "coordinator"
+	benchmarkTypeWorker      benchmarkType = "worker"
 )
 
 // GetConfigFromEnv returns the benchmark configuration from the environment
@@ -117,6 +117,7 @@ type Config struct {
 	ImagePullPolicy corev1.PullPolicy
 	Suite           string
 	Benchmark       string
+	Context         string
 	Workers         int
 	Parallelism     int
 	Requests        int
@@ -148,13 +149,13 @@ func (c *Config) ToEnv() map[string]string {
 	return env
 }
 
-// getBenchmarkContext returns the current benchmark context
-func getBenchmarkContext() benchmarkContext {
-	context := os.Getenv(benchmarkContextEnv)
+// getBenchmarkType returns the current benchmark type
+func getBenchmarkType() benchmarkType {
+	context := os.Getenv(benchmarkTypeEnv)
 	if context != "" {
-		return benchmarkContext(context)
+		return benchmarkType(context)
 	}
-	return benchmarkContextCoordinator
+	return benchmarkTypeCoordinator
 }
 
 // getBenchmarkWorker returns the current benchmark worker number

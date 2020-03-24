@@ -15,20 +15,19 @@
 package simulation
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
+	"github.com/onosproject/onos-test/pkg/util/async"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
-	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
+	"io/ioutil"
 	"k8s.io/client-go/kubernetes"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -59,17 +58,23 @@ func (c *Coordinator) Run() error {
 	workers := make([]*WorkerTask, len(suites))
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
+		env := c.config.Env
+		env[kube.NamespaceEnv] = c.config.ID
+		env[simulationTypeEnv] = string(simulationTypeWorker)
+		env[simulationWorkerEnv] = fmt.Sprintf("%d", i)
+		env[simulationJobEnv] = c.config.ID
 		config := &Config{
 			ID:              jobID,
 			Image:           c.config.Image,
 			ImagePullPolicy: c.config.ImagePullPolicy,
 			Simulation:      suite,
 			Simulators:      c.config.Simulators,
+			Context:         c.config.Context,
 			Duration:        c.config.Duration,
 			Rates:           c.config.Rates,
 			Jitter:          c.config.Jitter,
 			Args:            c.config.Args,
-			Env:             c.config.Env,
+			Env:             env,
 		}
 		worker := &WorkerTask{
 			client: c.client,
@@ -178,151 +183,34 @@ func (t *WorkerTask) getWorkerAddress(worker int) string {
 
 // createWorkers creates the simulation workers
 func (t *WorkerTask) createWorkers() error {
-	for i := 0; i < t.config.Simulators; i++ {
-		if err := t.createWorker(i); err != nil {
-			return err
-		}
-	}
-	return t.awaitRunning()
+	return async.IterAsync(t.config.Simulators, t.createWorker)
 }
 
 // createWorker creates the given worker
 func (t *WorkerTask) createWorker(worker int) error {
-	env := t.config.ToEnv()
-	env[kube.NamespaceEnv] = t.config.ID
-	env[simulationContextEnv] = string(simulationContextWorker)
-	env[simulationWorkerEnv] = fmt.Sprintf("%d", worker)
-	env[simulationJobEnv] = t.config.ID
-
-	envVars := make([]corev1.EnvVar, 0, len(env))
-	for key, value := range env {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  key,
-			Value: value,
-		})
-	}
-
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: getSimulatorName(worker),
-			Labels: map[string]string{
-				"simulation": t.config.ID,
-				"worker":     fmt.Sprintf("%d", worker),
-			},
-		},
-		Spec: corev1.PodSpec{
-			ServiceAccountName: t.config.ID,
-			RestartPolicy:      corev1.RestartPolicyNever,
-			Containers: []corev1.Container{
-				{
-					Name:            "simulation",
-					Image:           t.config.Image,
-					ImagePullPolicy: t.config.ImagePullPolicy,
-					Env:             envVars,
-					Ports: []corev1.ContainerPort{
-						{
-							Name:          "management",
-							ContainerPort: 5000,
-						},
-					},
-					ReadinessProbe: &corev1.Probe{
-						Handler: corev1.Handler{
-							TCPSocket: &corev1.TCPSocketAction{
-								Port: intstr.FromInt(5000),
-							},
-						},
-						InitialDelaySeconds: 2,
-						PeriodSeconds:       5,
-					},
-				},
-			},
-		},
-	}
-	_, err := t.client.CoreV1().Pods(t.config.ID).Create(pod)
-	if err != nil {
-		return err
-	}
-
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: getSimulatorName(worker),
-			Labels: map[string]string{
-				"simulation": t.config.ID,
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"simulation": t.config.ID,
-				"worker":     fmt.Sprintf("%d", worker),
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name: "management",
-					Port: 5000,
-				},
-			},
-		},
-	}
-	if _, err := t.client.CoreV1().Services(t.config.ID).Create(svc); err != nil {
-		return err
-	}
-
-	go t.streamWorkerLogs(worker)
-	return nil
-}
-
-// streamWorkerLogs streams the logs from the given worker
-func (t *WorkerTask) streamWorkerLogs(worker int) {
-	for {
-		pod, err := t.getPod(worker)
-		if err != nil || pod == nil {
-			return
-		}
-
-		if len(pod.Status.ContainerStatuses) > 0 &&
-			(pod.Status.ContainerStatuses[0].State.Running != nil ||
-				pod.Status.ContainerStatuses[0].State.Terminated != nil) {
-			req := t.client.CoreV1().Pods(t.config.ID).GetLogs(getSimulatorName(worker), &corev1.PodLogOptions{
-				Follow: true,
-			})
-			reader, err := req.Stream()
-			if err != nil {
-				return
-			}
-			defer reader.Close()
-
-			// Stream the logs to stdout
-			scanner := bufio.NewScanner(reader)
-			for scanner.Scan() {
-				logging.Print(scanner.Text())
-			}
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// awaitRunning blocks until the job creates a pod in the RUNNING state
-func (t *WorkerTask) awaitRunning() error {
-	for i := 0; i < t.config.Simulators; i++ {
-		if err := t.awaitWorkerRunning(i); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// awaitWorkerRunning blocks until the given worker is running
-func (t *WorkerTask) awaitWorkerRunning(worker int) error {
-	for {
-		pod, err := t.getPod(worker)
+	var data map[string]string
+	if file, err := os.Open(filepath.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
+		bytes, err := ioutil.ReadAll(file)
 		if err != nil {
 			return err
-		} else if pod != nil && len(pod.Status.ContainerStatuses) > 0 && pod.Status.ContainerStatuses[0].Ready {
-			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		data = map[string]string{
+			helm.ValuesFile: string(bytes),
+		}
 	}
+
+	job := &job.Job{
+		ID:              t.config.ID,
+		Image:           t.config.Image,
+		ImagePullPolicy: t.config.ImagePullPolicy,
+		Context:         t.config.Context,
+		Data:            data,
+		Env:             t.config.ToEnv(),
+		Timeout:         t.config.Duration,
+		Type:            "simulation",
+	}
+
+	return t.runner.StartJob(job)
 }
 
 // getSimulators returns the worker clients for the given simulation
@@ -341,15 +229,6 @@ func (t *WorkerTask) getSimulators() ([]SimulatorServiceClient, error) {
 	}
 	t.workers = workers
 	return workers, nil
-}
-
-// getPod finds the Pod for the given test
-func (t *WorkerTask) getPod(worker int) (*corev1.Pod, error) {
-	pod, err := t.client.CoreV1().Pods(t.config.ID).Get(getSimulatorName(worker), metav1.GetOptions{})
-	if err != nil && !k8serrors.IsNotFound(err) {
-		return nil, err
-	}
-	return pod, nil
 }
 
 // setupSimulation sets up the simulation

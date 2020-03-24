@@ -16,6 +16,7 @@ package test
 
 import (
 	"github.com/onosproject/onos-test/pkg/benchmark"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/input"
 	"time"
 )
@@ -24,6 +25,15 @@ import (
 type ChartBenchmarkSuite struct {
 	benchmark.Suite
 	value input.Source
+}
+
+// SetupBenchmark :: benchmark
+func (s *ChartBenchmarkSuite) SetupBenchmark(b *benchmark.Context) error {
+	return helm.Helm().
+		Chart("/etc/charts/atomix-controller").
+		Release("atomix-controller").
+		Set("scope", "Namespace").
+		Install(true)
 }
 
 // SetupWorker :: benchmark
