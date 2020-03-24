@@ -15,13 +15,8 @@
 package job
 
 import (
-	"context"
-	"github.com/onosproject/onos-test/pkg/helm"
-	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
-	"net"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -42,49 +37,22 @@ type Job struct {
 
 // Bootstrap bootstraps the job
 func Bootstrap() error {
-	lis, err := net.Listen("tcp", ":6000")
-	if err != nil {
-		return err
-	}
-	server := grpc.NewServer()
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	jobs := &jobServer{
-		wg: wg,
-	}
-	RegisterJobServiceServer(server, jobs)
-	go server.Serve(lis)
-	wg.Wait()
+	awaitReady()
 	return nil
 }
 
-// setReady marks the job ready
-func setReady() error {
-	f, err := os.Create(readyFile)
-	if err != nil {
-		return err
-	}
-	return f.Close()
-}
-
-// jobServer is a cluster job server
-type jobServer struct {
-	wg *sync.WaitGroup
-}
-
-// RunTestSuite runs the job
-func (s *jobServer) RunJob(ctx context.Context, request *RunRequest) (*RunResponse, error) {
-	info, err := os.Stat(helm.ContextPath)
-	if err == nil && info.IsDir() {
-		err = os.Chdir(helm.ContextPath)
-		if err != nil {
-			return nil, err
+// awaitReady waits for the job to become ready
+func awaitReady() {
+	for {
+		if isReady() {
+			return
 		}
+		time.Sleep(time.Second)
 	}
-	if err := setReady(); err != nil {
-		return nil, err
-	}
+}
 
-	s.wg.Done()
-	return &RunResponse{}, nil
+// isReady checks if the job is ready
+func isReady() bool {
+	info, err := os.Stat(readyFile)
+	return err == nil && !info.IsDir()
 }

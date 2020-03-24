@@ -16,13 +16,11 @@ package job
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/helm"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
-	"github.com/onosproject/onos-test/pkg/util/copy"
+	"github.com/onosproject/onos-test/pkg/util/files"
 	"github.com/onosproject/onos-test/pkg/util/logging"
-	"google.golang.org/grpc"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -432,35 +430,31 @@ func (n *Runner) createJob(job *Job) error {
 		},
 	})
 
-	servicePorts := []corev1.ServicePort{
-		{
-			Name: "bootstrap",
-			Port: 6000,
-		},
-	}
 	if n.server {
-		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name: "test",
-			Port: 5000,
-		})
-	}
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: job.ID,
-			Labels: map[string]string{
-				"job":  job.ID,
-				"type": job.Type,
+		servicePorts := []corev1.ServicePort{
+			{
+				Name: "test",
+				Port: 5000,
 			},
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"job": job.ID,
+		}
+		svc := &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: job.ID,
+				Labels: map[string]string{
+					"job":  job.ID,
+					"type": job.Type,
+				},
 			},
-			Ports: servicePorts,
-		},
-	}
-	if _, err := n.Clientset().CoreV1().Services(n.Namespace()).Create(svc); err != nil {
-		return err
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{
+					"job": job.ID,
+				},
+				Ports: servicePorts,
+			},
+		}
+		if _, err := n.Clientset().CoreV1().Services(n.Namespace()).Create(svc); err != nil {
+			return err
+		}
 	}
 
 	var volumes []corev1.Volume
@@ -501,17 +495,14 @@ func (n *Runner) createJob(job *Job) error {
 		}
 	}
 
-	containerPorts := []corev1.ContainerPort{
-		{
-			Name:          "bootstrap",
-			ContainerPort: 6000,
-		},
-	}
+	var containerPorts []corev1.ContainerPort
 	if n.server {
-		containerPorts = append(containerPorts, corev1.ContainerPort{
-			Name:          "test",
-			ContainerPort: 5000,
-		})
+		containerPorts = []corev1.ContainerPort{
+			{
+				Name:          "test",
+				ContainerPort: 5000,
+			},
+		}
 	}
 
 	var readinessProbe *corev1.Probe
@@ -642,25 +633,24 @@ func (n *Runner) copyContext(job *Job) error {
 		return err
 	}
 
-	return copyutil.Copy(n).
+	return files.Copy(n).
 		From(job.Context).
-		To(helm.ContextPath).
-		Pod(pod.Name).
+		To(pod.Name).
 		Do()
 }
 
 // runJob runs the job
 func (n *Runner) runJob(job *Job) error {
-	address := fmt.Sprintf("%s.%s.svc.cluster.local:5000", n.Namespace(), job.ID)
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+		return true
+	})
 	if err != nil {
 		return err
 	}
-	client := NewJobServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	_, err = client.RunJob(ctx, &RunRequest{})
-	return err
+	return files.Touch(n).
+		File(readyFile).
+		On(pod.Name).
+		Do()
 }
 
 // getStatus gets the status message and exit code of the given pod

@@ -8,4 +8,6 @@ USER test
 
 ADD _output/bin/onit-tests /usr/local/bin/onit-tests
 
+WORKDIR /home/test
+
 ENTRYPOINT ["onit-tests"]

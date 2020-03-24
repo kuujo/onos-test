@@ -15,13 +15,11 @@
 package kubernetes
 
 import (
-	"errors"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"os"
-	"path/filepath"
 )
 
 // NamespaceEnv is the environment variable for setting the k8s namespace
@@ -97,23 +95,9 @@ func GetRestConfig() (*rest.Config, error) {
 		return restconfig, nil
 	}
 
-	kubeconfig := os.Getenv("KUBECONFIG")
-	if kubeconfig == "" {
-		home := getHomeDir()
-		if home == "" {
-			return nil, errors.New("no home directory configured")
-		}
-		kubeconfig = filepath.Join(home, ".kube", "config")
-	}
-
-	// use the current context in kubeconfig
-	return clientcmd.BuildConfigFromFlags("", kubeconfig)
-}
-
-// getHomeDir returns the user's home directory if defined by environment variables
-func getHomeDir() string {
-	if h := os.Getenv("HOME"); h != "" {
-		return h
-	}
-	return os.Getenv("USERPROFILE") // windows
+	kubeconfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		clientcmd.NewDefaultClientConfigLoadingRules(),
+		&clientcmd.ConfigOverrides{},
+	)
+	return kubeconfig.ClientConfig()
 }

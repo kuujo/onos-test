@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package copyutil
+package files
 
 import (
 	"archive/tar"
@@ -21,8 +21,10 @@ import (
 	"github.com/onosproject/onos-test/pkg/kubernetes"
 	"io"
 	"io/ioutil"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/kubectl/pkg/cmd/exec"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/remotecommand"
 	"os"
 	"path"
 	"strings"
@@ -31,7 +33,8 @@ import (
 // Copy returns a new copier
 func Copy(client kubernetes.Client) *CopyOptions {
 	return &CopyOptions{
-		client: client,
+		client:    client,
+		namespace: client.Namespace(),
 	}
 }
 
@@ -39,7 +42,6 @@ func Copy(client kubernetes.Client) *CopyOptions {
 type CopyOptions struct {
 	client    kubernetes.Client
 	source    string
-	dest      string
 	namespace string
 	pod       string
 	container string
@@ -51,34 +53,32 @@ func (c *CopyOptions) From(src string) *CopyOptions {
 	return c
 }
 
-// To configures the copy destination directory
-func (c *CopyOptions) To(dest string) *CopyOptions {
-	c.dest = dest
-	return c
-}
-
-// Namespace configures the copy destination namespace
-func (c *CopyOptions) Namespace(namespace string) *CopyOptions {
-	c.namespace = namespace
-	return c
-}
-
-// Pod configures the copy destination pod
-func (c *CopyOptions) Pod(name string) *CopyOptions {
-	c.pod = name
-	return c
-}
-
-// Container configures the copy destination container
-func (c *CopyOptions) Container(name string) *CopyOptions {
-	c.container = name
+// To configures the copy destination pod
+func (c *CopyOptions) To(pod string, container ...string) *CopyOptions {
+	c.pod = pod
+	if len(container) > 0 {
+		c.container = container[0]
+	}
 	return c
 }
 
 // Do executes the copy to the pod
 func (c *CopyOptions) Do() error {
-	if c.source == "" || c.dest == "" {
+	if c.source == "" || c.pod == "" {
 		return errors.New("source and destination cannot be empty")
+	}
+
+	pod, err := c.client.Clientset().CoreV1().Pods(c.client.Namespace()).Get(c.pod, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	containerName := c.container
+	if len(containerName) == 0 {
+		if len(pod.Spec.Containers) > 1 {
+			return errors.New("destination container is ambiguous")
+		}
+		containerName = pod.Spec.Containers[0].Name
 	}
 
 	reader, writer := io.Pipe()
@@ -87,55 +87,42 @@ func (c *CopyOptions) Do() error {
 	if c.source != "/" && strings.HasSuffix(string(c.source[len(c.source)-1]), "/") {
 		c.source = c.source[:len(c.source)-1]
 	}
-	if c.dest != "/" && strings.HasSuffix(string(c.dest[len(c.dest)-1]), "/") {
-		c.dest = c.dest[:len(c.dest)-1]
-	}
 
 	go func() {
 		defer writer.Close()
-		err := makeTar(c.source, c.dest, writer)
+		err := makeTar(c.source, c.source, writer)
 		if err != nil {
 			fmt.Println(err)
 		}
 	}()
 
-	options := &exec.ExecOptions{}
-	options.StreamOptions = exec.StreamOptions{
-		IOStreams: genericclioptions.IOStreams{
-			In:  reader,
-			Out: os.Stdout,
-		},
-		Stdin:     true,
-		Namespace: c.namespace,
-		PodName:   c.pod,
-	}
-
 	cmd := []string{"tar", "-xf", "-"}
-	destDir := path.Dir(c.dest)
-	if len(destDir) > 0 {
-		cmd = append(cmd, "-C", destDir)
-	}
-	options.Command = cmd
-	options.Executor = &exec.DefaultRemoteExecutor{}
-	return c.execute(options)
-}
+	req := c.client.Clientset().CoreV1().RESTClient().
+		Post().
+		Resource("pods").
+		Name(c.pod).
+		Namespace(c.namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: containerName,
+			Command:   cmd,
+			Stdin:     true,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       false,
+		}, scheme.ParameterCodec)
 
-func (c *CopyOptions) execute(options *exec.ExecOptions) error {
-	if len(options.Namespace) == 0 {
-		options.Namespace = c.namespace
-	}
-	if len(c.container) > 0 {
-		options.ContainerName = c.container
-	}
-
-	options.Config = c.client.Config()
-	options.PodClient = c.client.Clientset().CoreV1()
-
-	if err := options.Validate(); err != nil {
+	exec, err := remotecommand.NewSPDYExecutor(c.client.Config(), "POST", req.URL())
+	if err != nil {
 		return err
 	}
-
-	if err := options.Run(); err != nil {
+	err = exec.Stream(remotecommand.StreamOptions{
+		Stdin:  reader,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+		Tty:    false,
+	})
+	if err != nil {
 		return err
 	}
 	return nil
@@ -213,10 +200,4 @@ func recursiveTar(srcBase, srcFile, destBase, destFile string, tw *tar.Writer) e
 		return f.Close()
 	}
 	return nil
-}
-
-// clean prevents path traversals by stripping them out.
-// This is adapted from https://golang.org/src/net/http/fs.go#L74
-func clean(fileName string) string {
-	return path.Clean(string(os.PathSeparator) + fileName)
 }

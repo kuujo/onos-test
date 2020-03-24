@@ -42,7 +42,6 @@ import (
 const ValuesEnv = "HELM_VALUES"
 const ValuesPath = "/etc/onit/values"
 const ValuesFile = "values.yaml"
-const ContextPath = "/etc/onit/context"
 
 var settings = cli.New()
 

@@ -151,7 +151,7 @@ func (t *WorkerTask) Run() (int, error) {
 		ID:              t.config.ID,
 		Image:           t.config.Image,
 		ImagePullPolicy: t.config.ImagePullPolicy,
-		Context:         helm.ContextPath,
+		Context:         ".",
 		Data:            data,
 		Env:             t.config.ToEnv(),
 		Timeout:         t.config.Timeout,
