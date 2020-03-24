@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
+	"path"
 	"time"
 )
 
@@ -391,7 +392,7 @@ func (n *Runner) startJob(job *Job) error {
 
 // createJob creates the job to run tests
 func (n *Runner) createJob(job *Job) error {
-	step := logging.NewStep(job.ID, "Deploy job coordinator")
+	step := logging.NewStep(job.ID, "Deploy job")
 	step.Start()
 
 	env := make([]corev1.EnvVar, 0, len(job.Env))
@@ -647,8 +648,9 @@ func (n *Runner) runJob(job *Job) error {
 	if err != nil {
 		return err
 	}
-	return files.Touch(n).
-		File(readyFile).
+	return files.Echo(n).
+		String(path.Base(job.Context)).
+		To(readyFile).
 		On(pod.Name).
 		Do()
 }

@@ -33,16 +33,19 @@ func Main() {
 
 // Run runs a test
 func Run() error {
-	if err := job.Bootstrap(); err != nil {
+	ctx, err := job.Bootstrap()
+	if err != nil {
 		return err
 	}
 
 	config := GetConfigFromEnv()
-	context := getTestContext()
-	switch context {
-	case testContextCoordinator:
+	config.Context = ctx
+
+	testType := getTestType()
+	switch testType {
+	case testTypeCoordinator:
 		return runCoordinator(config)
-	case testContextWorker:
+	case testTypeWorker:
 		return runWorker(config)
 	}
 	return nil

@@ -15,8 +15,10 @@
 package job
 
 import (
+	"io/ioutil"
 	corev1 "k8s.io/api/core/v1"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -36,9 +38,9 @@ type Job struct {
 }
 
 // Bootstrap bootstraps the job
-func Bootstrap() error {
+func Bootstrap() (string, error) {
 	awaitReady()
-	return nil
+	return getContext()
 }
 
 // awaitReady waits for the job to become ready
@@ -55,4 +57,18 @@ func awaitReady() {
 func isReady() bool {
 	info, err := os.Stat(readyFile)
 	return err == nil && !info.IsDir()
+}
+
+// getContext returns the job context
+func getContext() (string, error) {
+	file, err := os.Open(readyFile)
+	defer file.Close()
+	if err != nil {
+		return "", err
+	}
+	bytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(bytes)), nil
 }

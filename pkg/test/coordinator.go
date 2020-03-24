@@ -55,7 +55,7 @@ func (c *Coordinator) Run() error {
 		for i, suite := range suites {
 			jobID := newJobID(c.config.ID+"-"+strconv.Itoa(iteration), suite)
 			env := c.config.Env
-			env[testContextEnv] = string(testContextWorker)
+			env[testTypeEnv] = string(testTypeWorker)
 			config := &Config{
 				ID:              jobID,
 				Image:           c.config.Image,
@@ -63,6 +63,7 @@ func (c *Coordinator) Run() error {
 				Suites:          []string{suite},
 				Tests:           c.config.Tests,
 				Env:             env,
+				Context:         c.config.Context,
 				Iterations:      c.config.Iterations,
 			}
 			worker := &WorkerTask{
@@ -86,7 +87,7 @@ func runWorkers(tasks []*WorkerTask) error {
 	wg := &sync.WaitGroup{}
 	errChan := make(chan error, len(tasks))
 	codeChan := make(chan int, len(tasks))
-	for _, job := range tasks {
+	for _, task := range tasks {
 		wg.Add(1)
 		go func(task *WorkerTask) {
 			status, err := task.Run()
@@ -96,7 +97,7 @@ func runWorkers(tasks []*WorkerTask) error {
 				codeChan <- status
 			}
 			wg.Done()
-		}(job)
+		}(task)
 	}
 
 	// Wait for all jobs to start before proceeding
@@ -153,7 +154,7 @@ func (t *WorkerTask) Run() (int, error) {
 		ID:              t.config.ID,
 		Image:           t.config.Image,
 		ImagePullPolicy: t.config.ImagePullPolicy,
-		Context:         ".",
+		Context:         t.config.Context,
 		Data:            data,
 		Env:             t.config.ToEnv(),
 		Timeout:         t.config.Timeout,

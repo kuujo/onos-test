@@ -16,6 +16,7 @@ package files
 
 import (
 	"errors"
+	"fmt"
 	"github.com/onosproject/onos-test/pkg/kubernetes"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,31 +25,43 @@ import (
 	"os"
 )
 
-// Touch returns a new touch client
-func Touch(client kubernetes.Client) *TouchOptions {
-	return &TouchOptions{
+// Echo returns a new echo client
+func Echo(client kubernetes.Client) *EchoOptions {
+	return &EchoOptions{
 		client:    client,
 		namespace: client.Namespace(),
 	}
 }
 
-// TouchOptions is options for touching a file
-type TouchOptions struct {
+// EchoOptions is options for echoing output to a file
+type EchoOptions struct {
 	client    kubernetes.Client
 	namespace string
 	pod       string
 	container string
 	file      string
+	bytes     []byte
 }
 
-// File configures the file to touch
-func (o *TouchOptions) File(name string) *TouchOptions {
-	o.file = name
+// Bytes sets the bytes to echo
+func (o *EchoOptions) Bytes(bytes []byte) *EchoOptions {
+	o.bytes = bytes
+	return o
+}
+
+// Contents sets the contents to echo
+func (o *EchoOptions) String(s string) *EchoOptions {
+	return o.Bytes([]byte(s))
+}
+
+// To configures the file to which to echo
+func (o *EchoOptions) To(filename string) *EchoOptions {
+	o.file = filename
 	return o
 }
 
 // To configures the copy destination pod
-func (o *TouchOptions) On(pod string, container ...string) *TouchOptions {
+func (o *EchoOptions) On(pod string, container ...string) *EchoOptions {
 	o.pod = pod
 	if len(container) > 0 {
 		o.container = container[0]
@@ -57,7 +70,7 @@ func (o *TouchOptions) On(pod string, container ...string) *TouchOptions {
 }
 
 // Do executes the copy to the pod
-func (o *TouchOptions) Do() error {
+func (o *EchoOptions) Do() error {
 	if o.pod == "" || o.file == "" {
 		return errors.New("target file cannot be empty")
 	}
@@ -75,7 +88,7 @@ func (o *TouchOptions) Do() error {
 		containerName = pod.Spec.Containers[0].Name
 	}
 
-	cmd := []string{"touch", o.file}
+	cmd := []string{"/bin/sh", "-c", fmt.Sprintf("echo \"%s\" > %s", string(o.bytes), o.file)}
 	req := o.client.Clientset().CoreV1().RESTClient().
 		Post().
 		Resource("pods").

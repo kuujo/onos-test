@@ -23,10 +23,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-type testContext string
+type testType string
 
 const (
-	testContextEnv = "TEST_CONTEXT"
+	testTypeEnv = "TEST_TYPE"
 
 	testJobEnv             = "TEST_JOB"
 	testImageEnv           = "TEST_IMAGE"
@@ -38,8 +38,8 @@ const (
 )
 
 const (
-	testContextCoordinator testContext = "coordinator"
-	testContextWorker      testContext = "worker"
+	testTypeCoordinator testType = "coordinator"
+	testTypeWorker      testType = "worker"
 )
 
 // GetConfigFromEnv returns the test configuration from the environment
@@ -73,6 +73,7 @@ type Config struct {
 	Suites          []string
 	Tests           []string
 	Env             map[string]string
+	Context         string
 	Timeout         time.Duration
 	Iterations      int
 	Verbose         bool
@@ -94,15 +95,14 @@ func (c *Config) ToEnv() map[string]string {
 	if c.Verbose {
 		env[testVerbose] = strconv.FormatBool(c.Verbose)
 	}
-
 	return env
 }
 
 // getTestContext returns the current test context
-func getTestContext() testContext {
-	context := os.Getenv(testContextEnv)
+func getTestType() testType {
+	context := os.Getenv(testTypeEnv)
 	if context != "" {
-		return testContext(context)
+		return testType(context)
 	}
-	return testContextCoordinator
+	return testTypeCoordinator
 }

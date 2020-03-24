@@ -38,6 +38,12 @@ type Worker struct {
 
 // Run runs a benchmark
 func (w *Worker) Run() error {
+	if w.config.Context != "" {
+		if err := os.Chdir(w.config.Context); err != nil {
+			return err
+		}
+	}
+
 	lis, err := net.Listen("tcp", ":5000")
 	if err != nil {
 		return err
