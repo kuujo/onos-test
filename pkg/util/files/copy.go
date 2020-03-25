@@ -42,19 +42,26 @@ func Copy(client kubernetes.Client) *CopyOptions {
 type CopyOptions struct {
 	client    kubernetes.Client
 	source    string
+	dest      string
 	namespace string
 	pod       string
 	container string
 }
 
-// From starts a copy from the given source
+// From sets the copy source
 func (c *CopyOptions) From(src string) *CopyOptions {
 	c.source = src
 	return c
 }
 
-// To configures the copy destination pod
-func (c *CopyOptions) To(pod string, container ...string) *CopyOptions {
+// To sets the copy destination path
+func (c *CopyOptions) To(dest string) *CopyOptions {
+	c.dest = dest
+	return c
+}
+
+// On sets the copy destination pod
+func (c *CopyOptions) On(pod string, container ...string) *CopyOptions {
 	c.pod = pod
 	if len(container) > 0 {
 		c.container = container[0]
@@ -83,14 +90,21 @@ func (c *CopyOptions) Do() error {
 
 	reader, writer := io.Pipe()
 
+	if c.dest == "" {
+		c.dest = c.source
+	}
+
 	// strip trailing slash (if any)
 	if c.source != "/" && strings.HasSuffix(string(c.source[len(c.source)-1]), "/") {
 		c.source = c.source[:len(c.source)-1]
 	}
+	if c.dest != "/" && strings.HasSuffix(string(c.dest[len(c.dest)-1]), "/") {
+		c.dest = c.dest[:len(c.dest)-1]
+	}
 
 	go func() {
 		defer writer.Close()
-		err := makeTar(c.source, c.source, writer)
+		err := makeTar(c.source, c.dest, writer)
 		if err != nil {
 			fmt.Println(err)
 		}

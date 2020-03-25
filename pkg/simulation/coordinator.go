@@ -69,6 +69,7 @@ func (c *Coordinator) Run() error {
 				ID:              jobID,
 				Image:           c.config.Config.Image,
 				ImagePullPolicy: c.config.Config.ImagePullPolicy,
+				Executable:      c.config.Config.Executable,
 				Context:         c.config.Config.Context,
 				Values:          c.config.Config.Values,
 				ValueFiles:      c.config.Config.ValueFiles,

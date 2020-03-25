@@ -17,7 +17,6 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
 	"go/build"
 	"math/rand"
@@ -94,16 +93,18 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	testID := random.NewPetName(2)
-	if image == "" {
-		image = fmt.Sprintf("onosproject/onit:%s", testID)
-	}
 
+	var executable string
 	if pkgPath != "" {
-		err = buildImage(pkgPath, image)
+		executable = filepath.Join(os.TempDir(), "onit", testID)
+		err = buildBinary(pkgPath, executable)
 		if err != nil {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 			return err
+		}
+		if image == "" {
+			image = "onosproject/onit-runner:latest"
 		}
 	}
 
@@ -123,6 +124,7 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 			ID:              testID,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+			Executable:      executable,
 			Context:         context,
 			ValueFiles:      valueFiles,
 			Values:          values,
@@ -136,13 +138,13 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	return test.Run(config)
 }
 
-func buildImage(path, image string) error {
+func buildBinary(pkgPath, binPath string) error {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
 
-	pkg, err := build.Import(path, workDir, build.ImportComment)
+	pkg, err := build.Import(pkgPath, workDir, build.ImportComment)
 	if err != nil {
 		return err
 	}
@@ -151,71 +153,14 @@ func buildImage(path, image string) error {
 		return errors.New("test package must be a command")
 	}
 
-	tempDir := filepath.Join(os.TempDir(), "onit", string(rand.Int()))
-
 	// Build the command
-	goBuild := exec.Command("go", "build", "-o", filepath.Join(tempDir, "main"), path)
-	goBuild.Stderr = os.Stderr
-	goBuild.Stdout = os.Stdout
+	build := exec.Command("go", "build", "-o", binPath, pkgPath)
+	build.Stderr = os.Stderr
+	build.Stdout = os.Stdout
 	env := os.Environ()
 	env = append(env, "GOOS=linux", "CGO_ENABLED=0")
-	goBuild.Env = env
-
-	if err := goBuild.Run(); err != nil {
-		return err
-	}
-
-	defer func() {
-		_ = os.Remove(tempDir)
-	}()
-
-	// Generate a Dockerfile to build the test image
-	file, err := os.Create(filepath.Join(tempDir, "Dockerfile"))
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	fmt.Fprintf(file, `
-FROM alpine
-
-RUN addgroup -S test && adduser -S test -G test
-
-USER test
-
-ADD main /usr/local/bin/main
-
-WORKDIR /home/test
-
-ENTRYPOINT ["main"]
-`)
-
-	// Build the Docker image
-	dockerBuild := exec.Command("docker", "build", "-t", image, tempDir)
-	dockerBuild.Stderr = os.Stderr
-	dockerBuild.Stdout = os.Stdout
-
-	if err := dockerBuild.Run(); err != nil {
-		return err
-	}
-
-	// Determine whether the test is being run on a KIND cluster
-	kindCluster, err := isKindCluster()
-	if err != nil {
-		return err
-	}
-
-	// Load the image into KIND
-	if kindCluster {
-		kindLoad := exec.Command("kind", "load", "docker-image", image)
-		kindLoad.Stderr = os.Stderr
-		kindLoad.Stdout = os.Stdout
-
-		if err := kindLoad.Run(); err != nil {
-			return err
-		}
-	}
-	return nil
+	build.Env = env
+	return build.Run()
 }
 
 func isKindCluster() (bool, error) {

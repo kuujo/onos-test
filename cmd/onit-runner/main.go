@@ -12,46 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package job
+package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"io/ioutil"
-	corev1 "k8s.io/api/core/v1"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-const configPath = "/etc/onit"
-const configFile = "job.json"
-const readyFile = "/tmp/job-ready"
+const readyFile = "/tmp/bin-ready"
 
-// Config is a job configuration
-type Config struct {
-	ID              string
-	Image           string
-	ImagePullPolicy corev1.PullPolicy
-	Executable      string
-	Context         string
-	Values          map[string][]string
-	ValueFiles      map[string][]string
-	Args            []string
-	Env             map[string]string
-	Timeout         time.Duration
-}
-
-// Job is a job configuration
-type Job struct {
-	*Config
-	JobConfig interface{}
-	Type      string
-}
-
-// Bootstrap bootstraps the job
-func Bootstrap(config interface{}) error {
+func main() {
 	awaitReady()
-	return LoadConfig(config)
+	if err := run(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
 
 // awaitReady waits for the job to become ready
@@ -70,20 +50,33 @@ func isReady() bool {
 	return err == nil && !info.IsDir()
 }
 
-// LoadConfig returns the job configuration
-func LoadConfig(config interface{}) error {
-	file, err := os.Open(filepath.Join(configPath, configFile))
+// getBinaryFile returns the binary file name
+func getBinaryFile() (string, error) {
+	file, err := os.Open(readyFile)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer file.Close()
 	bytes, err := ioutil.ReadAll(file)
 	if err != nil {
-		return err
+		return "", err
 	}
-	err = json.Unmarshal(bytes, config)
+	fileName := strings.TrimSpace(string(bytes))
+	return fileName, nil
+}
+
+// run runs the main
+func run() error {
+	fileName, err := getBinaryFile()
 	if err != nil {
 		return err
 	}
-	return nil
+	absPath, err := filepath.Abs(fileName)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(absPath)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	cmd.Env = os.Environ()
+	return cmd.Run()
 }

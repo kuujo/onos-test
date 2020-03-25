@@ -36,6 +36,11 @@ func Run(config *Config) error {
 		}
 	}
 
+	configExecutable := ""
+	if config.Executable != "" {
+		configExecutable = path.Base(config.Executable)
+	}
+
 	configContext := ""
 	if config.Context != "" {
 		configContext = path.Base(config.Context)
@@ -48,6 +53,7 @@ func Run(config *Config) error {
 				ID:              config.ID,
 				Image:           config.Image,
 				ImagePullPolicy: config.ImagePullPolicy,
+				Executable:      configExecutable,
 				Context:         configContext,
 				Values:          config.Values,
 				ValueFiles:      configValueFiles,

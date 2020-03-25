@@ -16,9 +16,9 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/simulation"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -119,16 +119,18 @@ func runSimulateCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	testID := random.NewPetName(2)
-	if image == "" {
-		image = fmt.Sprintf("onosproject/onit:%s", testID)
-	}
 
+	var executable string
 	if pkgPath != "" {
-		err = buildImage(pkgPath, image)
+		executable = filepath.Join(os.TempDir(), "onit", testID)
+		err = buildBinary(pkgPath, executable)
 		if err != nil {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 			return err
+		}
+		if image == "" {
+			image = "onosproject/onit-runner:latest"
 		}
 	}
 
@@ -146,6 +148,7 @@ func runSimulateCommand(cmd *cobra.Command, args []string) error {
 			ID:              testID,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+			Executable:      executable,
 			Context:         context,
 			ValueFiles:      valueFiles,
 			Values:          values,

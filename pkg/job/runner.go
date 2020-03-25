@@ -374,6 +374,14 @@ func (n *Runner) startJob(job *Job) error {
 		step.Fail(err)
 		return err
 	}
+	if err := n.copyBinary(job); err != nil {
+		step.Fail(err)
+		return err
+	}
+	if err := n.runBinary(job); err != nil {
+		step.Fail(err)
+		return err
+	}
 	if err := n.copyValueFiles(job); err != nil {
 		step.Fail(err)
 		return err
@@ -631,6 +639,64 @@ func (n *Runner) awaitJobReady(job *Job) error {
 	}
 }
 
+// copyBinary copies the job binary to the pod
+func (n *Runner) copyBinary(job *Job) error {
+	if job.Executable == "" {
+		return nil
+	}
+
+	step := logging.NewStep(job.ID, "Copy binary %s", path.Base(job.Executable))
+	step.Start()
+
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+		return true
+	})
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+
+	err = files.Copy(n).
+		From(job.Executable).
+		To(job.Executable).
+		On(pod.Name).
+		Do()
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+	step.Complete()
+	return nil
+}
+
+// runBinary runs the job binary
+func (n *Runner) runBinary(job *Job) error {
+	if job.Executable == "" {
+		return nil
+	}
+
+	step := logging.NewStep(job.ID, "Run binary %s", path.Base(job.Executable))
+	step.Start()
+
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+		return true
+	})
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+	err = files.Echo(n).
+		String(path.Base(job.Executable)).
+		To("/tmp/bin-ready").
+		On(pod.Name).
+		Do()
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+	return nil
+}
+
 // copyValueFiles copies the value files to the pod
 func (n *Runner) copyValueFiles(job *Job) error {
 	if job.ValueFiles == nil || len(job.ValueFiles) == 0 {
@@ -654,7 +720,8 @@ func (n *Runner) copyValueFiles(job *Job) error {
 			fileStep.Start()
 			err := files.Copy(n).
 				From(valueFile).
-				To(pod.Name).
+				To(valueFile).
+				On(pod.Name).
 				Do()
 			if err != nil {
 				fileStep.Fail(err)
@@ -687,7 +754,8 @@ func (n *Runner) copyContext(job *Job) error {
 
 	err = files.Copy(n).
 		From(job.Context).
-		To(pod.Name).
+		To(job.Context).
+		On(pod.Name).
 		Do()
 	if err != nil {
 		step.Fail(err)

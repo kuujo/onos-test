@@ -16,8 +16,8 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -43,7 +43,7 @@ func getBenchCommand() *cobra.Command {
 	cmd.Flags().StringP("suite", "s", "", "the benchmark suite to run")
 	cmd.Flags().StringP("benchmark", "b", "", "the name of the benchmark to run")
 	cmd.Flags().IntP("workers", "w", 1, "the number of workers to run")
-	cmd.Flags().IntP("parallel", "p", 1, "the number of concurrent goroutines per client")
+	cmd.Flags().Int("parallel", 1, "the number of concurrent goroutines per client")
 	cmd.Flags().IntP("requests", "n", 0, "the number of requests to run")
 	cmd.Flags().DurationP("max-latency", "m", 0, "maximum latency allowed")
 	cmd.Flags().DurationP("duration", "d", 0, "the duration for which to run the test")
@@ -102,16 +102,18 @@ func runBenchCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	testID := random.NewPetName(2)
-	if image == "" {
-		image = fmt.Sprintf("onosproject/onit:%s", testID)
-	}
 
+	var executable string
 	if pkgPath != "" {
-		err = buildImage(pkgPath, image)
+		executable = filepath.Join(os.TempDir(), "onit", testID)
+		err = buildBinary(pkgPath, executable)
 		if err != nil {
 			cmd.SilenceUsage = true
 			cmd.SilenceErrors = true
 			return err
+		}
+		if image == "" {
+			image = "onosproject/onit-runner:latest"
 		}
 	}
 
@@ -127,6 +129,7 @@ func runBenchCommand(cmd *cobra.Command, args []string) error {
 	config := &benchmark.Config{
 		Config: &job.Config{
 			ID:              testID,
+			Executable:      executable,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 			Context:         context,
