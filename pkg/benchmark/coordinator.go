@@ -60,6 +60,14 @@ func (c *Coordinator) Run() error {
 	workers := make([]*WorkerTask, len(suites))
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
+		env := c.config.Env
+		if env == nil {
+			env = make(map[string]string)
+		}
+		env[kube.NamespaceEnv] = c.config.ID
+		env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
+		env[benchmarkWorkerEnv] = fmt.Sprintf("%d", i)
+		env[benchmarkJobEnv] = c.config.ID
 		config := &Config{
 			Config: &job.Config{
 				ID:              jobID,
@@ -68,7 +76,7 @@ func (c *Coordinator) Run() error {
 				Context:         c.config.Config.Context,
 				Values:          c.config.Config.Values,
 				ValueFiles:      c.config.Config.ValueFiles,
-				Env:             c.config.Config.Env,
+				Env:             env,
 				Timeout:         c.config.Config.Timeout,
 			},
 			Suite:       suite,
@@ -186,12 +194,6 @@ func (t *WorkerTask) createWorkers() error {
 
 // createWorker creates the given worker
 func (t *WorkerTask) createWorker(worker int) error {
-	env := t.config.Env
-	env[kube.NamespaceEnv] = t.config.ID
-	env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
-	env[benchmarkWorkerEnv] = fmt.Sprintf("%d", worker)
-	env[benchmarkJobEnv] = t.config.ID
-
 	return t.runner.StartJob(&job.Job{
 		Config:    t.config.Config,
 		JobConfig: t.config,

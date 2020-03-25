@@ -374,6 +374,10 @@ func (n *Runner) startJob(job *Job) error {
 		step.Fail(err)
 		return err
 	}
+	if err := n.copyValueFiles(job); err != nil {
+		step.Fail(err)
+		return err
+	}
 	if err := n.copyContext(job); err != nil {
 		step.Fail(err)
 		return err
@@ -392,7 +396,7 @@ func (n *Runner) startJob(job *Job) error {
 
 // createJob creates the job to run tests
 func (n *Runner) createJob(job *Job) error {
-	step := logging.NewStep(job.ID, "Deploy job")
+	step := logging.NewStep(job.ID, "Start job")
 	step.Start()
 
 	env := make([]corev1.EnvVar, 0, len(job.Env))
@@ -434,7 +438,7 @@ func (n *Runner) createJob(job *Job) error {
 	if n.server {
 		servicePorts := []corev1.ServicePort{
 			{
-				Name: "test",
+				Name: "management",
 				Port: 5000,
 			},
 		}
@@ -458,8 +462,9 @@ func (n *Runner) createJob(job *Job) error {
 		}
 	}
 
-	json, err := json.Marshal(job)
+	json, err := json.Marshal(job.JobConfig)
 	if err != nil {
+		step.Fail(err)
 		return err
 	}
 
@@ -505,7 +510,7 @@ func (n *Runner) createJob(job *Job) error {
 	if n.server {
 		containerPorts = []corev1.ContainerPort{
 			{
-				Name:          "test",
+				Name:          "management",
 				ContainerPort: 5000,
 			},
 		}
@@ -626,38 +631,94 @@ func (n *Runner) awaitJobReady(job *Job) error {
 	}
 }
 
+// copyValueFiles copies the value files to the pod
+func (n *Runner) copyValueFiles(job *Job) error {
+	if job.ValueFiles == nil || len(job.ValueFiles) == 0 {
+		return nil
+	}
+
+	step := logging.NewStep(job.ID, "Upload value files")
+	step.Start()
+
+	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
+		return true
+	})
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+
+	for _, valueFiles := range job.ValueFiles {
+		for _, valueFile := range valueFiles {
+			fileStep := logging.NewStep(job.ID, "Upload value file %s", valueFile)
+			fileStep.Start()
+			err := files.Copy(n).
+				From(valueFile).
+				To(pod.Name).
+				Do()
+			if err != nil {
+				fileStep.Fail(err)
+				step.Fail(err)
+				return err
+			}
+			fileStep.Complete()
+		}
+	}
+	step.Complete()
+	return nil
+}
+
 // copyContext copies the job context to the pod
 func (n *Runner) copyContext(job *Job) error {
 	if job.Context == "" {
 		return nil
 	}
 
+	step := logging.NewStep(job.ID, "Copy Helm context")
+	step.Start()
+
 	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 		return true
 	})
 	if err != nil {
+		step.Fail(err)
 		return err
 	}
 
-	return files.Copy(n).
+	err = files.Copy(n).
 		From(job.Context).
 		To(pod.Name).
 		Do()
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+	step.Complete()
+	return nil
 }
 
 // runJob runs the job
 func (n *Runner) runJob(job *Job) error {
+	step := logging.NewStep(job.ID, "Run job")
+	step.Start()
+
 	pod, err := n.getPod(job, func(pod corev1.Pod) bool {
 		return true
 	})
 	if err != nil {
+		step.Fail(err)
 		return err
 	}
-	return files.Echo(n).
+	err = files.Echo(n).
 		String(path.Base(job.Context)).
 		To(readyFile).
 		On(pod.Name).
 		Do()
+	if err != nil {
+		step.Fail(err)
+		return err
+	}
+	return nil
 }
 
 // getStatus gets the status message and exit code of the given pod
