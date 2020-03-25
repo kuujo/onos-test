@@ -54,13 +54,6 @@ proto:
 		--entrypoint build/bin/compile_protos.sh \
 		onosproject/protoc-go:stable
 
-onit-docker: # @HELP build onit Docker image
-onit-docker:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/onit/_output/bin/onit ./cmd/onit
-	docker build build/onit -f build/onit/Dockerfile \
-		--build-arg ONOS_BUILD_VERSION=${ONOS_BUILD_VERSION} \
-		-t onosproject/onit:${ONOS_TEST_VERSION}
-
 onit-tests-docker: # @HELP build onit tests Docker image
 onit-tests-docker:
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o build/onit-tests/_output/bin/onit-tests ./cmd/onit-tests
@@ -68,12 +61,11 @@ onit-tests-docker:
 		-t onosproject/onit-tests:${ONOS_TEST_VERSION}
 
 images: # @HELP build all Docker images
-images: onit-docker onit-tests-docker
+images: onit-tests-docker
 
 kind: # @HELP build Docker images and add them to the currently configured kind cluster
 kind: images
 	@if [ "`kind get clusters`" = '' ]; then echo "no kind cluster found" && exit 1; fi
-	kind load docker-image onosproject/onit:${ONOS_TEST_VERSION}
 	kind load docker-image onosproject/onit-tests:${ONOS_TEST_VERSION}
 
 all: build images tests
