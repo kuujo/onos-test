@@ -25,17 +25,9 @@ import (
 // Run runs the benchmark
 func Run(config *Config) error {
 	job := &jobs.Job{
-		ID:              config.ID,
-		Image:           config.Image,
-		ImagePullPolicy: config.ImagePullPolicy,
-		Context:         config.Context,
-		Data:            config.Data,
-		Env:             config.Env,
-		Timeout:         config.Duration,
-		Type:            "simulation",
-	}
-	if err := job.MarshalConfig(config); err != nil {
-		return err
+		Config:    config.Config,
+		JobConfig: config,
+		Type:      simulationJobType,
 	}
 	return jobs.Run(job)
 }
@@ -51,13 +43,8 @@ func Main() {
 
 // run runs a simulation
 func run() error {
-	job, err := jobs.Bootstrap()
-	if err != nil {
-		return err
-	}
-
 	config := &Config{}
-	if err := job.UnmarshalConfig(config); err != nil {
+	if err := jobs.Bootstrap(config); err != nil {
 		return err
 	}
 

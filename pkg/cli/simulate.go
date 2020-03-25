@@ -15,12 +15,13 @@
 package cli
 
 import (
+	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/simulation"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	jobs "github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -63,18 +64,18 @@ func getSimulateCommand() *cobra.Command {
 	return cmd
 }
 
-func runSimulateCommand(cmd *cobra.Command, _ []string) error {
+func runSimulateCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
 	image, _ := cmd.Flags().GetString("image")
 	sim, _ := cmd.Flags().GetString("simulation")
 	workers, _ := cmd.Flags().GetInt("simulators")
 	duration, _ := cmd.Flags().GetDuration("duration")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
 	files, _ := cmd.Flags().GetStringArray("values")
 	sets, _ := cmd.Flags().GetStringArray("set")
-	args, _ := cmd.Flags().GetStringToString("args")
+	simArgs, _ := cmd.Flags().GetStringToString("args")
 	operations, _ := cmd.Flags().GetStringToString("schedule")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
 	imagePullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	pullPolicy := corev1.PullPolicy(imagePullPolicy)
 
@@ -101,38 +102,41 @@ func runSimulateCommand(cmd *cobra.Command, _ []string) error {
 		rates[name] = d
 	}
 
-	env, err := parseEnv(sets)
+	valueFiles, err := parseFiles(files)
 	if err != nil {
 		return err
 	}
 
-	data, err := parseData(files)
+	values, err := parseOverrides(sets)
 	if err != nil {
 		return err
 	}
 
-	job := &jobs.Job{
-		ID:              random.NewPetName(2),
-		Image:           image,
-		ImagePullPolicy: pullPolicy,
-		Data:            data,
-		Env:             env,
-		Timeout:         timeout,
-		Type:            "simulation",
+	var context string
+	if len(args) > 0 {
+		path, err := filepath.Abs(args[0])
+		if err != nil {
+			return err
+		}
+		context = path
 	}
 
 	config := &simulation.Config{
+		Config: &job.Config{
+			ID:              random.NewPetName(2),
+			Image:           image,
+			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+			Context:         context,
+			ValueFiles:      valueFiles,
+			Values:          values,
+			Timeout:         timeout,
+		},
 		Simulation: sim,
 		Simulators: workers,
 		Duration:   duration,
 		Rates:      rates,
 		Jitter:     jitters,
-		Args:       args,
+		Args:       simArgs,
 	}
-
-	err = job.MarshalConfig(config)
-	if err != nil {
-		return err
-	}
-	return jobs.Run(job)
+	return simulation.Run(config)
 }

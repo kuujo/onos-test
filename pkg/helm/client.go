@@ -22,6 +22,13 @@ import (
 
 var clients = make(map[string]Client)
 
+var context = &Context{}
+
+// SetContext sets the Helm context
+func SetContext(ctx *Context) {
+	context = ctx
+}
+
 // Namespace returns the Helm namespace
 func Namespace() string {
 	return kubernetes.GetNamespaceFromEnv()

@@ -15,10 +15,11 @@
 package cli
 
 import (
+	"github.com/onosproject/onos-test/pkg/job"
+	"path/filepath"
 	"time"
 
 	"github.com/onosproject/onos-test/pkg/benchmark"
-	jobs "github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/util/random"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +30,7 @@ func getBenchCommand() *cobra.Command {
 		Use:     "benchmark",
 		Aliases: []string{"benchmarks", "bench"},
 		Short:   "Run benchmarks on Kubernetes",
+		Args:    cobra.MaximumNArgs(1),
 		RunE:    runBenchCommand,
 	}
 	cmd.Flags().StringP("image", "i", "", "the benchmark image to run")
@@ -50,7 +52,7 @@ func getBenchCommand() *cobra.Command {
 	return cmd
 }
 
-func runBenchCommand(cmd *cobra.Command, _ []string) error {
+func runBenchCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
 	image, _ := cmd.Flags().GetString("image")
@@ -61,7 +63,7 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 	requests, _ := cmd.Flags().GetInt("requests")
 	files, _ := cmd.Flags().GetStringArray("values")
 	sets, _ := cmd.Flags().GetStringArray("set")
-	args, _ := cmd.Flags().GetStringToString("args")
+	benchArgs, _ := cmd.Flags().GetStringToString("args")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	imagePullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	pullPolicy := corev1.PullPolicy(imagePullPolicy)
@@ -81,41 +83,43 @@ func runBenchCommand(cmd *cobra.Command, _ []string) error {
 		maxLatency = &d
 	}
 
-	env, err := parseEnv(sets)
+	valueFiles, err := parseFiles(files)
 	if err != nil {
 		return err
 	}
 
-	data, err := parseData(files)
+	values, err := parseOverrides(sets)
 	if err != nil {
 		return err
 	}
 
-	job := &jobs.Job{
-		ID:              random.NewPetName(2),
-		Image:           image,
-		ImagePullPolicy: pullPolicy,
-		Data:            data,
-		Env:             env,
-		Timeout:         timeout,
-		Type:            "benchmark",
+	var context string
+	if len(args) > 0 {
+		path, err := filepath.Abs(args[0])
+		if err != nil {
+			return err
+		}
+		context = path
 	}
 
 	config := &benchmark.Config{
+		Config: &job.Config{
+			ID:              random.NewPetName(2),
+			Image:           image,
+			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+			Context:         context,
+			ValueFiles:      valueFiles,
+			Values:          values,
+			Timeout:         timeout,
+		},
 		Suite:       suite,
 		Benchmark:   benchmarkName,
 		Workers:     workers,
 		Parallelism: parallelism,
 		Requests:    requests,
 		Duration:    duration,
-		Args:        args,
-		Timeout:     timeout,
+		Args:        benchArgs,
 		MaxLatency:  maxLatency,
 	}
-
-	err = job.MarshalConfig(config)
-	if err != nil {
-		return err
-	}
-	return jobs.Run(job)
+	return benchmark.Run(config)
 }

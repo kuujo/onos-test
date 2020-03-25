@@ -15,7 +15,7 @@
 package simulation
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +25,7 @@ type simulationType string
 
 const (
 	simulationTypeEnv = "SIMULATION_TYPE"
+	simulationJobType = "simulation"
 
 	simulationJobEnv    = "SIMULATION_JOB"
 	simulationWorkerEnv = "SIMULATION_WORKER"
@@ -37,18 +38,13 @@ const (
 
 // Config is a simulation configuration
 type Config struct {
-	ID              string
-	Image           string
-	ImagePullPolicy corev1.PullPolicy
-	Simulation      string
-	Simulators      int
-	Rates           map[string]time.Duration
-	Jitter          map[string]float64
-	Context         string
-	Data            map[string]string
-	Env             map[string]string
-	Duration        time.Duration
-	Args            map[string]string
+	*job.Config `json:",inline"`
+	Simulation  string                   `json:"simulation,omitempty"`
+	Simulators  int                      `json:"simulators,omitempty"`
+	Duration    time.Duration            `json:"duration,omitempty"`
+	Rates       map[string]time.Duration `json:"rates,omitempty"`
+	Jitter      map[string]float64       `json:"jitter,omitempty"`
+	Args        map[string]string        `json:"args,omitempty"`
 }
 
 // getSimulationType returns the current simulation type

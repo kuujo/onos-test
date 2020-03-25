@@ -17,6 +17,7 @@ package test
 import (
 	"context"
 	"fmt"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"google.golang.org/grpc"
 	"net"
@@ -38,11 +39,27 @@ type Worker struct {
 
 // Run runs a benchmark
 func (w *Worker) Run() error {
-	if w.config.Context != "" {
-		if err := os.Chdir(w.config.Context); err != nil {
-			return err
+	releases := make(map[string]*helm.ReleaseContext)
+	for name, values := range w.config.Values {
+		releases[name] = &helm.ReleaseContext{
+			WorkDir: w.config.Context,
+			Values:  values,
 		}
 	}
+	for name, files := range w.config.ValueFiles {
+		release, ok := releases[name]
+		if !ok {
+			release = &helm.ReleaseContext{
+				WorkDir: w.config.Context,
+			}
+		}
+		release.ValueFiles = files
+		releases[name] = release
+	}
+	helm.SetContext(&helm.Context{
+		WorkDir:  w.config.Context,
+		Releases: releases,
+	})
 
 	lis, err := net.Listen("tcp", ":5000")
 	if err != nil {

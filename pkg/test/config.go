@@ -15,15 +15,15 @@
 package test
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
-	"time"
 )
 
 type testType string
 
 const (
 	testTypeEnv = "TEST_TYPE"
+	testJobType = "test"
 )
 
 const (
@@ -33,17 +33,11 @@ const (
 
 // Config is a test configuration
 type Config struct {
-	ID              string
-	Image           string
-	ImagePullPolicy corev1.PullPolicy
-	Suites          []string
-	Tests           []string
-	Context         string
-	Data            map[string]string
-	Env             map[string]string
-	Timeout         time.Duration
-	Iterations      int
-	Verbose         bool
+	*job.Config `json:",inline"`
+	Suites      []string `json:"suites,omitempty"`
+	Tests       []string `json:"tests,omitempty"`
+	Iterations  int      `json:"iterations,omitempty"`
+	Verbose     bool     `json:"verbose,omitempty"`
 }
 
 // getTestContext returns the current test context

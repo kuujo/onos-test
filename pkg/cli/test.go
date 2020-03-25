@@ -16,11 +16,9 @@ package cli
 
 import (
 	"errors"
-	"github.com/onosproject/onos-test/pkg/helm"
-	"io/ioutil"
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 	"path/filepath"
-	"sigs.k8s.io/yaml"
 	"strings"
 	"time"
 
@@ -72,12 +70,12 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 		iterations = -1
 	}
 
-	env, err := parseEnv(sets)
+	valueFiles, err := parseFiles(files)
 	if err != nil {
 		return err
 	}
 
-	data, err := parseData(files)
+	values, err := parseOverrides(sets)
 	if err != nil {
 		return err
 	}
@@ -92,22 +90,53 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	config := &test.Config{
-		ID:              random.NewPetName(2),
-		Image:           image,
-		ImagePullPolicy: corev1.PullPolicy(pullPolicy),
-		Context:         context,
-		Data:            data,
-		Env:             env,
-		Suites:          suites,
-		Tests:           testNames,
-		Timeout:         timeout,
-		Iterations:      iterations,
-		Verbose:         logging.GetVerbose(),
+		Config: &job.Config{
+			ID:              random.NewPetName(2),
+			Image:           image,
+			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
+			Context:         context,
+			ValueFiles:      valueFiles,
+			Values:          values,
+			Timeout:    timeout,
+		},
+		Suites:     suites,
+		Tests:      testNames,
+		Iterations: iterations,
+		Verbose:    logging.GetVerbose(),
 	}
 	return test.Run(config)
 }
 
-func parseEnv(values []string) (map[string]string, error) {
+func parseFiles(files []string) (map[string][]string, error) {
+	if len(files) == 0 {
+		return map[string][]string{}, nil
+	}
+
+	values := make(map[string][]string)
+	for _, path := range files {
+		index := strings.Index(path, "=")
+		if index == -1 {
+			return nil, errors.New("values file must be in the format {release}={file}")
+		}
+		release, path := path[:index], path[index+1:]
+		path, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		_, err = os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		releaseValues, ok := values[release]
+		if !ok {
+			releaseValues = make([]string, 0)
+		}
+		values[release] = append(releaseValues, path)
+	}
+	return values, nil
+}
+
+func parseOverrides(values []string) (map[string][]string, error) {
 	overrides := make(map[string][]string)
 	for _, set := range values {
 		index := strings.Index(set, ".")
@@ -121,50 +150,5 @@ func parseEnv(values []string) (map[string]string, error) {
 		}
 		overrides[release] = append(override, value)
 	}
-	valuesBytes, err := yaml.Marshal(overrides)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		helm.ValuesEnv: string(valuesBytes),
-	}, nil
-}
-
-func parseData(files []string) (map[string]string, error) {
-	if len(files) == 0 {
-		return map[string]string{}, nil
-	}
-
-	values := make(map[string][]interface{})
-	for _, path := range files {
-		index := strings.Index(path, "=")
-		if index == -1 {
-			return nil, errors.New("values file must be in the format {release}={file}")
-		}
-		release, path := path[:index], path[index+1:]
-		file, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		bytes, err := ioutil.ReadAll(file)
-		if err != nil {
-			return nil, err
-		}
-		releaseData := make(map[string]interface{})
-		if err := yaml.Unmarshal(bytes, &releaseData); err != nil {
-			return nil, err
-		}
-		releaseDatas, ok := values[release]
-		if !ok {
-			releaseDatas = make([]interface{}, 0)
-		}
-		values[release] = append(releaseDatas, releaseData)
-	}
-	bytes, err := yaml.Marshal(values)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		helm.ValuesFile: string(bytes),
-	}, nil
+	return overrides, nil
 }

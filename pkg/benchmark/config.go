@@ -15,7 +15,7 @@
 package benchmark
 
 import (
-	corev1 "k8s.io/api/core/v1"
+	"github.com/onosproject/onos-test/pkg/job"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +25,7 @@ type benchmarkType string
 
 const (
 	benchmarkTypeEnv = "BENCHMARK_TYPE"
+	benchmarkJobType = "benchmark"
 
 	benchmarkJobEnv    = "BENCHMARK_JOB"
 	benchmarkWorkerEnv = "BENCHMARK_WORKER"
@@ -37,21 +38,15 @@ const (
 
 // Config is a benchmark configuration
 type Config struct {
-	ID              string
-	Image           string
-	ImagePullPolicy corev1.PullPolicy
-	Suite           string
-	Benchmark       string
-	Workers         int
-	Parallelism     int
-	Requests        int
-	Duration        *time.Duration
-	Context         string
-	Data            map[string]string
-	Env             map[string]string
-	Args            map[string]string
-	Timeout         time.Duration
-	MaxLatency      *time.Duration
+	*job.Config `json:",inline"`
+	Suite       string            `json:"suite,omitempty"`
+	Benchmark   string            `json:"benchmark,omitempty"`
+	Workers     int               `json:"workers,omitempty"`
+	Parallelism int               `json:"parallelism,omitempty"`
+	Requests    int               `json:"requests,omitempty"`
+	Duration    *time.Duration    `json:"duration,omitempty"`
+	Args        map[string]string `json:"args,omitempty"`
+	MaxLatency  *time.Duration    `json:"maxLatency,omitempty"`
 }
 
 // getBenchmarkType returns the current benchmark type

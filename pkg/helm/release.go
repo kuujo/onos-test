@@ -25,61 +25,21 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	helm "helm.sh/helm/v3/pkg/kube"
 	"helm.sh/helm/v3/pkg/release"
-	"helm.sh/helm/v3/pkg/strvals"
-	"io/ioutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
-	"path"
 	"reflect"
-	"sigs.k8s.io/yaml"
 	"strings"
 )
 
-const ValuesEnv = "HELM_VALUES"
 const ValuesPath = "/etc/onit/values"
 const ValuesFile = "values.yaml"
 
 var settings = cli.New()
-
-func getValues(name string) (map[string]interface{}, error) {
-	values := make(map[string]interface{})
-	file, err := os.Open(path.Join(ValuesPath, ValuesFile))
-	if err == nil {
-		bytes, err := ioutil.ReadAll(file)
-		if err != nil {
-			return nil, err
-		}
-		rawValues := make(map[string]interface{})
-		if err := yaml.Unmarshal(bytes, &rawValues); err != nil {
-			return nil, err
-		}
-		if releaseValues, ok := rawValues[name]; ok {
-			for _, value := range releaseValues.([]interface{}) {
-				values = mergeMaps(values, value.(map[string]interface{}))
-			}
-		}
-	}
-
-	valuesEnv := os.Getenv("HELM_VALUES")
-	if valuesEnv != "" {
-		rawValues := make(map[string]interface{})
-		if err := yaml.Unmarshal([]byte(valuesEnv), &rawValues); err != nil {
-			return nil, err
-		}
-		if releaseValues, ok := rawValues[name]; ok {
-			for _, value := range releaseValues.([]string) {
-				if err := strvals.ParseInto(value, values); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-	return values, nil
-}
 
 func newRelease(name string, chart *Chart, config *action.Configuration) *Release {
 	var release *Release
@@ -101,7 +61,12 @@ func newRelease(name string, chart *Chart, config *action.Configuration) *Releas
 		return false, nil
 	}
 
-	values, err := getValues(name)
+	ctx := context.Release(name)
+	opts := &values.Options{
+		ValueFiles: ctx.ValueFiles,
+		Values:     ctx.Values,
+	}
+	values, err := opts.MergeValues(getter.All(settings))
 	if err != nil {
 		panic(err)
 	}
@@ -110,6 +75,7 @@ func newRelease(name string, chart *Chart, config *action.Configuration) *Releas
 		Client:    api.NewClient(chart.Client, filter),
 		chart:     chart,
 		config:    config,
+		context:   ctx,
 		name:      name,
 		values:    make(map[string]interface{}),
 		overrides: values,
@@ -122,6 +88,7 @@ type Release struct {
 	api.Client
 	chart     *Chart
 	config    *action.Configuration
+	context   *ReleaseContext
 	name      string
 	values    map[string]interface{}
 	overrides map[string]interface{}
@@ -172,6 +139,12 @@ func (r *Release) getResources() (helm.ResourceList, error) {
 
 // Install installs the Helm chart
 func (r *Release) Install(wait bool) error {
+	if r.context.WorkDir != "" {
+		if err := os.Chdir(r.context.WorkDir); err != nil {
+			return err
+		}
+	}
+
 	install := action.NewInstall(r.config)
 	install.Namespace = r.Namespace()
 	install.SkipCRDs = r.SkipCRDs()

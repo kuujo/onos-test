@@ -17,15 +17,12 @@ package test
 import (
 	"context"
 	"fmt"
-	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"google.golang.org/grpc"
-	"io/ioutil"
 	"k8s.io/client-go/kubernetes"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 )
@@ -55,14 +52,19 @@ func (c *Coordinator) Run() error {
 		for i, suite := range suites {
 			jobID := newJobID(c.config.ID+"-"+strconv.Itoa(iteration), suite)
 			config := &Config{
-				ID:              jobID,
-				Image:           c.config.Image,
-				ImagePullPolicy: c.config.ImagePullPolicy,
-				Suites:          []string{suite},
-				Tests:           c.config.Tests,
-				Env:             c.config.Env,
-				Context:         c.config.Context,
-				Iterations:      c.config.Iterations,
+				Config: &job.Config{
+					ID:              jobID,
+					Image:           c.config.Config.Image,
+					ImagePullPolicy: c.config.Config.ImagePullPolicy,
+					Context:         c.config.Config.Context,
+					Values:          c.config.Config.Values,
+					ValueFiles:      c.config.Config.ValueFiles,
+					Env:             c.config.Config.Env,
+					Timeout:         c.config.Config.Timeout,
+				},
+				Suites:     []string{suite},
+				Tests:      c.config.Tests,
+				Iterations: c.config.Iterations,
 			}
 			worker := &WorkerTask{
 				client: c.client,
@@ -137,32 +139,17 @@ func (t *WorkerTask) Run() (int, error) {
 		return 0, err
 	}
 
-	var data map[string]string
-	if file, err := os.Open(filepath.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
-		bytes, err := ioutil.ReadAll(file)
-		if err != nil {
-			return 0, err
-		}
-		data = map[string]string{
-			helm.ValuesFile: string(bytes),
-		}
-	}
-
 	env := t.config.Env
 	env[testTypeEnv] = string(testTypeWorker)
 
 	job := &job.Job{
-		ID:              t.config.ID,
-		Image:           t.config.Image,
-		ImagePullPolicy: t.config.ImagePullPolicy,
-		Context:         t.config.Context,
-		Data:            data,
-		Env:             env,
-		Timeout:         t.config.Timeout,
-		Type:            "test",
+		Config:    t.config.Config,
+		JobConfig: t.config,
+		Type:      testJobType,
 	}
 
-	if err := t.runner.StartJob(job); err != nil {
+	err := t.runner.StartJob(job)
+	if err != nil {
 		return 0, err
 	}
 

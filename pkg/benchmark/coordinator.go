@@ -17,21 +17,18 @@ package benchmark
 import (
 	"context"
 	"fmt"
-	"github.com/onosproject/onos-test/pkg/helm"
-	jobs "github.com/onosproject/onos-test/pkg/job"
+	"github.com/onosproject/onos-test/pkg/job"
 	kube "github.com/onosproject/onos-test/pkg/kubernetes"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/async"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
-	"io/ioutil"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"math"
 	"os"
-	"path/filepath"
 	"sync"
 	"text/tabwriter"
 	"time"
@@ -64,23 +61,28 @@ func (c *Coordinator) Run() error {
 	for i, suite := range suites {
 		jobID := newJobID(c.config.ID, suite)
 		config := &Config{
-			ID:              jobID,
-			Image:           c.config.Image,
-			ImagePullPolicy: c.config.ImagePullPolicy,
-			Suite:           suite,
-			Benchmark:       c.config.Benchmark,
-			Context:         c.config.Context,
-			Workers:         c.config.Workers,
-			Parallelism:     c.config.Parallelism,
-			Requests:        c.config.Requests,
-			Duration:        c.config.Duration,
-			MaxLatency:      c.config.MaxLatency,
-			Args:            c.config.Args,
-			Env:             c.config.Env,
+			Config: &job.Config{
+				ID:              jobID,
+				Image:           c.config.Config.Image,
+				ImagePullPolicy: c.config.Config.ImagePullPolicy,
+				Context:         c.config.Config.Context,
+				Values:          c.config.Config.Values,
+				ValueFiles:      c.config.Config.ValueFiles,
+				Env:             c.config.Config.Env,
+				Timeout:         c.config.Config.Timeout,
+			},
+			Suite:       suite,
+			Benchmark:   c.config.Benchmark,
+			Workers:     c.config.Workers,
+			Parallelism: c.config.Parallelism,
+			Requests:    c.config.Requests,
+			Duration:    c.config.Duration,
+			MaxLatency:  c.config.MaxLatency,
+			Args:        c.config.Args,
 		}
 		worker := &WorkerTask{
 			client: c.client,
-			runner: jobs.NewNamespace(jobID),
+			runner: job.NewNamespace(jobID),
 			config: config,
 		}
 		workers[i] = worker
@@ -136,7 +138,7 @@ func newJobID(testID, suite string) string {
 // WorkerTask manages a single test job for a test worker
 type WorkerTask struct {
 	client  *kubernetes.Clientset
-	runner  *jobs.Runner
+	runner  *job.Runner
 	config  *Config
 	workers []WorkerServiceClient
 }
@@ -184,35 +186,17 @@ func (t *WorkerTask) createWorkers() error {
 
 // createWorker creates the given worker
 func (t *WorkerTask) createWorker(worker int) error {
-	var data map[string]string
-	if file, err := os.Open(filepath.Join(helm.ValuesPath, helm.ValuesFile)); err == nil {
-		bytes, err := ioutil.ReadAll(file)
-		if err != nil {
-			return err
-		}
-		data = map[string]string{
-			helm.ValuesFile: string(bytes),
-		}
-	}
-
 	env := t.config.Env
 	env[kube.NamespaceEnv] = t.config.ID
 	env[benchmarkTypeEnv] = string(benchmarkTypeWorker)
 	env[benchmarkWorkerEnv] = fmt.Sprintf("%d", worker)
 	env[benchmarkJobEnv] = t.config.ID
 
-	job := &jobs.Job{
-		ID:              t.config.ID,
-		Image:           t.config.Image,
-		ImagePullPolicy: t.config.ImagePullPolicy,
-		Context:         t.config.Context,
-		Data:            data,
-		Env:             env,
-		Timeout:         t.config.Timeout,
-		Type:            "benchmark",
-	}
-
-	return t.runner.StartJob(job)
+	return t.runner.StartJob(&job.Job{
+		Config:    t.config.Config,
+		JobConfig: t.config,
+		Type:      benchmarkJobType,
+	})
 }
 
 // getWorkerConns returns the worker clients for the given benchmark

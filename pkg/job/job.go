@@ -20,7 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -28,37 +27,30 @@ const configPath = "/etc/onit"
 const configFile = "job.json"
 const readyFile = "/tmp/job-ready"
 
-// Job is a job configuration
-type Job struct {
+// Config is a job configuration
+type Config struct {
 	ID              string
 	Image           string
 	ImagePullPolicy corev1.PullPolicy
-	Config          []byte
 	Context         string
-	Data            map[string]string
+	Values          map[string][]string
+	ValueFiles      map[string][]string
 	Args            []string
 	Env             map[string]string
 	Timeout         time.Duration
-	Type            string
 }
 
-func (j *Job) MarshalConfig(config interface{}) error {
-	bytes, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	j.Config = bytes
-	return nil
-}
-
-func (j *Job) UnmarshalConfig(config interface{}) error {
-	return json.Unmarshal(j.Config, config)
+// Job is a job configuration
+type Job struct {
+	*Config
+	JobConfig interface{}
+	Type      string
 }
 
 // Bootstrap bootstraps the job
-func Bootstrap() (*Job, error) {
+func Bootstrap(config interface{}) error {
 	awaitReady()
-	return getJob()
+	return getConfig(config)
 }
 
 // awaitReady waits for the job to become ready
@@ -77,40 +69,20 @@ func isReady() bool {
 	return err == nil && !info.IsDir()
 }
 
-// getJob returns the job configuration
-func getJob() (*Job, error) {
+// getConfig returns the job configuration
+func getConfig(config interface{}) error {
 	file, err := os.Open(filepath.Join(configPath, configFile))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 	bytes, err := ioutil.ReadAll(file)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	job := &Job{}
-	err = json.Unmarshal(bytes, job)
+	err = json.Unmarshal(bytes, config)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	ctx, err := getContext()
-	if err != nil {
-		return nil, err
-	}
-	job.Context = ctx
-	return job, nil
-}
-
-// getContext returns the job context
-func getContext() (string, error) {
-	file, err := os.Open(readyFile)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	bytes, err := ioutil.ReadAll(file)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(bytes)), nil
+	return nil
 }
