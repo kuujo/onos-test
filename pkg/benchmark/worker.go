@@ -17,11 +17,11 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
 	"net"
-	"os"
 	"reflect"
 	"regexp"
 )
@@ -42,10 +42,13 @@ type Worker struct {
 
 // Run runs a benchmark
 func (w *Worker) Run() error {
-	if w.config.Context != "" {
-		if err := os.Chdir(w.config.Context); err != nil {
-			return err
-		}
+	err := helm.SetContext(&helm.Context{
+		WorkDir:    w.config.Context,
+		Values:     w.config.Values,
+		ValueFiles: w.config.ValueFiles,
+	})
+	if err != nil {
+		return err
 	}
 
 	lis, err := net.Listen("tcp", ":5000")

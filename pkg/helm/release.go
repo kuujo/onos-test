@@ -36,9 +36,6 @@ import (
 	"strings"
 )
 
-const ValuesPath = "/etc/onit/values"
-const ValuesFile = "values.yaml"
-
 var settings = cli.New()
 
 func newRelease(name string, chart *Chart, config *action.Configuration) *Release {
@@ -137,12 +134,20 @@ func (r *Release) getResources() (helm.ResourceList, error) {
 	return resources, nil
 }
 
-// Install installs the Helm chart
-func (r *Release) Install(wait bool) error {
-	if r.context.WorkDir != "" {
-		if err := os.Chdir(r.context.WorkDir); err != nil {
+// setContextDir sets the directory to the context dir
+func (r *Release) setContextDir() error {
+	if context.WorkDir != "" {
+		if err := os.Chdir(context.WorkDir); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// Install installs the Helm chart
+func (r *Release) Install(wait bool) error {
+	if err := r.setContextDir(); err != nil {
+		return err
 	}
 
 	install := action.NewInstall(r.config)
@@ -204,6 +209,10 @@ func (r *Release) Install(wait bool) error {
 
 // Uninstall uninstalls the Helm chart
 func (r *Release) Uninstall() error {
+	if err := r.setContextDir(); err != nil {
+		return err
+	}
+
 	uninstall := action.NewUninstall(r.config)
 	_, err := uninstall.Run(r.Name())
 	return err

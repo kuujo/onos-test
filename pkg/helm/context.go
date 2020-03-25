@@ -14,29 +14,64 @@
 
 package helm
 
+import "path/filepath"
+
+var context = &Context{}
+
+// SetContext sets the Helm context
+func SetContext(ctx *Context) error {
+	ctxWorkDir := ctx.WorkDir
+	if ctxWorkDir != "" {
+		absDir, err := filepath.Abs(ctxWorkDir)
+		if err != nil {
+			return err
+		}
+		ctxWorkDir = absDir
+	}
+
+	ctxValueFiles := make(map[string][]string)
+	for release, valueFiles := range ctx.ValueFiles {
+		cleanValueFiles := make([]string, 0)
+		for _, valueFile := range valueFiles {
+			absPath, err := filepath.Abs(valueFile)
+			if err != nil {
+				return err
+			}
+			cleanValueFiles = append(cleanValueFiles, absPath)
+		}
+		ctxValueFiles[release] = cleanValueFiles
+	}
+
+	context = &Context{
+		WorkDir:    ctxWorkDir,
+		Values:     ctx.Values,
+		ValueFiles: ctxValueFiles,
+	}
+	return nil
+}
+
 // Context is a Helm context
 type Context struct {
 	// WorkDir is the Helm working directory
 	WorkDir string
 
-	// Releases is the Helm release contexts
-	Releases map[string]*ReleaseContext
+	// Values is a mapping of release values
+	Values map[string][]string
+
+	// ValueFiles is a mapping of release value files
+	ValueFiles map[string][]string
 }
 
 // Release returns the context for the given release
 func (c *Context) Release(name string) *ReleaseContext {
-	ctx, ok := c.Releases[name]
-	if !ok {
-		return &ReleaseContext{}
+	return &ReleaseContext{
+		Values:     c.Values[name],
+		ValueFiles: c.ValueFiles[name],
 	}
-	return ctx
 }
 
 // ReleaseContext is a Helm release context
 type ReleaseContext struct {
-	// WorkDir is the release working directory
-	WorkDir string
-
 	// ValueFiles is the release value files
 	ValueFiles []string
 

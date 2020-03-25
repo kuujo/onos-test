@@ -17,12 +17,12 @@ package simulation
 import (
 	"context"
 	"fmt"
+	"github.com/onosproject/onos-test/pkg/helm"
 	"github.com/onosproject/onos-test/pkg/registry"
 	"github.com/onosproject/onos-test/pkg/util/logging"
 	"google.golang.org/grpc"
 	"math/rand"
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -264,10 +264,13 @@ type simulatorServer struct {
 
 // Run runs a simulation
 func (s *simulatorServer) Run() error {
-	if s.config.Context != "" {
-		if err := os.Chdir(s.config.Context); err != nil {
-			return err
-		}
+	err := helm.SetContext(&helm.Context{
+		WorkDir:    s.config.Context,
+		Values:     s.config.Values,
+		ValueFiles: s.config.ValueFiles,
+	})
+	if err != nil {
+		return err
 	}
 
 	lis, err := net.Listen("tcp", ":5000")

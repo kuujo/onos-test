@@ -17,6 +17,7 @@ package test
 import (
 	jobs "github.com/onosproject/onos-test/pkg/job"
 	"os"
+	"path"
 )
 
 // The executor is the entrypoint for test images. It takes the input and environment and runs
@@ -24,10 +25,42 @@ import (
 
 // Run runs the test
 func Run(config *Config) error {
+	configValueFiles := make(map[string][]string)
+	if config.ValueFiles != nil {
+		for release, valueFiles := range config.ValueFiles {
+			configReleaseFiles := make([]string, 0)
+			for _, valueFile := range valueFiles {
+				configReleaseFiles = append(configReleaseFiles, path.Base(valueFile))
+			}
+			configValueFiles[release] = configReleaseFiles
+		}
+	}
+
+	configContext := ""
+	if config.Context != "" {
+		configContext = path.Base(config.Context)
+	}
+
 	job := &jobs.Job{
-		Config:    config.Config,
-		JobConfig: config,
-		Type:      testJobType,
+		Config: config.Config,
+		JobConfig: &Config{
+			Config: &jobs.Config{
+				ID:              config.ID,
+				Image:           config.Image,
+				ImagePullPolicy: config.ImagePullPolicy,
+				Context:         configContext,
+				Values:          config.Values,
+				ValueFiles:      configValueFiles,
+				Args:            config.Args,
+				Env:             config.Env,
+				Timeout:         config.Timeout,
+			},
+			Suites:     config.Suites,
+			Tests:      config.Tests,
+			Iterations: config.Iterations,
+			Verbose:    config.Verbose,
+		},
+		Type: testJobType,
 	}
 	return jobs.Run(job)
 }

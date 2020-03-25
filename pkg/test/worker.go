@@ -39,27 +39,14 @@ type Worker struct {
 
 // Run runs a benchmark
 func (w *Worker) Run() error {
-	releases := make(map[string]*helm.ReleaseContext)
-	for name, values := range w.config.Values {
-		releases[name] = &helm.ReleaseContext{
-			WorkDir: w.config.Context,
-			Values:  values,
-		}
-	}
-	for name, files := range w.config.ValueFiles {
-		release, ok := releases[name]
-		if !ok {
-			release = &helm.ReleaseContext{
-				WorkDir: w.config.Context,
-			}
-		}
-		release.ValueFiles = files
-		releases[name] = release
-	}
-	helm.SetContext(&helm.Context{
-		WorkDir:  w.config.Context,
-		Releases: releases,
+	err := helm.SetContext(&helm.Context{
+		WorkDir:    w.config.Context,
+		Values:     w.config.Values,
+		ValueFiles: w.config.ValueFiles,
 	})
+	if err != nil {
+		return err
+	}
 
 	lis, err := net.Listen("tcp", ":5000")
 	if err != nil {
