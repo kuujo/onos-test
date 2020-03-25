@@ -15,6 +15,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
 	"path/filepath"
 	"time"
@@ -33,6 +35,7 @@ func getBenchCommand() *cobra.Command {
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runBenchCommand,
 	}
+	cmd.Flags().StringP("package", "p", "", "the package to run")
 	cmd.Flags().StringP("image", "i", "", "the benchmark image to run")
 	cmd.Flags().String("image-pull-policy", string(corev1.PullIfNotPresent), "the Docker image pull policy")
 	cmd.Flags().StringArrayP("values", "f", []string{}, "release values paths")
@@ -55,6 +58,7 @@ func getBenchCommand() *cobra.Command {
 func runBenchCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
+	pkgPath, _ := cmd.Flags().GetString("package")
 	image, _ := cmd.Flags().GetString("image")
 	suite, _ := cmd.Flags().GetString("suite")
 	benchmarkName, _ := cmd.Flags().GetString("benchmark")
@@ -67,6 +71,10 @@ func runBenchCommand(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	imagePullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	pullPolicy := corev1.PullPolicy(imagePullPolicy)
+
+	if pkgPath == "" && image == "" {
+		return errors.New("must specify either a --package or --image to run")
+	}
 
 	var duration *time.Duration
 	if cmd.Flags().Changed("duration") {
@@ -93,6 +101,20 @@ func runBenchCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	testID := random.NewPetName(2)
+	if image == "" {
+		image = fmt.Sprintf("onosproject/onit:%s", testID)
+	}
+
+	if pkgPath != "" {
+		err = buildImage(pkgPath, image)
+		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+	}
+
 	var context string
 	if len(args) > 0 {
 		path, err := filepath.Abs(args[0])
@@ -104,7 +126,7 @@ func runBenchCommand(cmd *cobra.Command, args []string) error {
 
 	config := &benchmark.Config{
 		Config: &job.Config{
-			ID:              random.NewPetName(2),
+			ID:              testID,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 			Context:         context,

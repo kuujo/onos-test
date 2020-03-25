@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
 	"go/build"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,10 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 func getTestCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -59,7 +64,7 @@ func getTestCommand() *cobra.Command {
 func runTestCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
-	_package, _ := cmd.Flags().GetString("package")
+	pkgPath, _ := cmd.Flags().GetString("package")
 	image, _ := cmd.Flags().GetString("image")
 	files, _ := cmd.Flags().GetStringArray("values")
 	sets, _ := cmd.Flags().GetStringArray("set")
@@ -70,7 +75,7 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	iterations, _ := cmd.Flags().GetInt("iterations")
 	untilFailure, _ := cmd.Flags().GetBool("until-failure")
 
-	if _package == "" && image == "" {
+	if pkgPath == "" && image == "" {
 		return errors.New("must specify either a --package or --image to run")
 	}
 
@@ -89,115 +94,28 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	testID := random.NewPetName(2)
+	if image == "" {
+		image = fmt.Sprintf("onosproject/onit:%s", testID)
+	}
+
+	if pkgPath != "" {
+		err = buildImage(pkgPath, image)
+		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+	}
 
 	var context string
 	if len(args) > 0 {
 		path, err := filepath.Abs(args[0])
 		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
 			return err
 		}
 		context = path
-	}
-
-	if _package != "" {
-		workDir, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-
-		pkg, err := build.Import(_package, workDir, build.ImportComment)
-		if err != nil {
-			return err
-		}
-
-		if !pkg.IsCommand() {
-			return errors.New("test package must be a command")
-		}
-
-		if context == "" {
-			println(pkg.SrcRoot)
-			context = pkg.SrcRoot
-		}
-
-		tempDir := filepath.Join(os.TempDir(), "onit", testID)
-
-		// Build the command
-		goBuild := exec.Command("go", "build", "-o", filepath.Join(tempDir, "main"), _package)
-		goBuild.Stderr = os.Stderr
-		goBuild.Stdout = os.Stdout
-		env := os.Environ()
-		env = append(env, "GOOS=linux", "CGO_ENABLED=0")
-		goBuild.Env = env
-
-		if err := goBuild.Run(); err != nil {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			return err
-		}
-
-		defer func() {
-			_ = os.Remove(tempDir)
-		}()
-
-		// Generate a Dockerfile to build the test image
-		file, err := os.Create(filepath.Join(tempDir, "Dockerfile"))
-		if err != nil {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			return err
-		}
-		defer file.Close()
-
-		fmt.Fprintf(file, `
-FROM alpine
-
-RUN addgroup -S test && adduser -S test -G test
-
-USER test
-
-ADD main /usr/local/bin/main
-
-WORKDIR /home/test
-
-ENTRYPOINT ["main"]
-`)
-
-		// If the image tag was not specified, generate one from the test ID
-		if image == "" {
-			image = fmt.Sprintf("onosproject/onit:%s", testID)
-		}
-
-		// Build the Docker image
-		dockerBuild := exec.Command("docker", "build", "-t", image, tempDir)
-		dockerBuild.Stderr = os.Stderr
-		dockerBuild.Stdout = os.Stdout
-
-		if err := dockerBuild.Run(); err != nil {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			return err
-		}
-
-		// Determine whether the test is being run on a KIND cluster
-		kindCluster, err := isKindCluster()
-		if err != nil {
-			cmd.SilenceUsage = true
-			cmd.SilenceErrors = true
-			return err
-		}
-
-		// Load the image into KIND
-		if kindCluster {
-			kindLoad := exec.Command("kind", "load", "docker-image", image)
-			kindLoad.Stderr = os.Stderr
-			kindLoad.Stdout = os.Stdout
-
-			if err := kindLoad.Run(); err != nil {
-				cmd.SilenceUsage = true
-				cmd.SilenceErrors = true
-				return err
-			}
-		}
 	}
 
 	config := &test.Config{
@@ -216,6 +134,88 @@ ENTRYPOINT ["main"]
 		Verbose:    logging.GetVerbose(),
 	}
 	return test.Run(config)
+}
+
+func buildImage(path, image string) error {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	pkg, err := build.Import(path, workDir, build.ImportComment)
+	if err != nil {
+		return err
+	}
+
+	if !pkg.IsCommand() {
+		return errors.New("test package must be a command")
+	}
+
+	tempDir := filepath.Join(os.TempDir(), "onit", string(rand.Int()))
+
+	// Build the command
+	goBuild := exec.Command("go", "build", "-o", filepath.Join(tempDir, "main"), path)
+	goBuild.Stderr = os.Stderr
+	goBuild.Stdout = os.Stdout
+	env := os.Environ()
+	env = append(env, "GOOS=linux", "CGO_ENABLED=0")
+	goBuild.Env = env
+
+	if err := goBuild.Run(); err != nil {
+		return err
+	}
+
+	defer func() {
+		_ = os.Remove(tempDir)
+	}()
+
+	// Generate a Dockerfile to build the test image
+	file, err := os.Create(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	fmt.Fprintf(file, `
+FROM alpine
+
+RUN addgroup -S test && adduser -S test -G test
+
+USER test
+
+ADD main /usr/local/bin/main
+
+WORKDIR /home/test
+
+ENTRYPOINT ["main"]
+`)
+
+	// Build the Docker image
+	dockerBuild := exec.Command("docker", "build", "-t", image, tempDir)
+	dockerBuild.Stderr = os.Stderr
+	dockerBuild.Stdout = os.Stdout
+
+	if err := dockerBuild.Run(); err != nil {
+		return err
+	}
+
+	// Determine whether the test is being run on a KIND cluster
+	kindCluster, err := isKindCluster()
+	if err != nil {
+		return err
+	}
+
+	// Load the image into KIND
+	if kindCluster {
+		kindLoad := exec.Command("kind", "load", "docker-image", image)
+		kindLoad.Stderr = os.Stderr
+		kindLoad.Stdout = os.Stdout
+
+		if err := kindLoad.Run(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isKindCluster() (bool, error) {

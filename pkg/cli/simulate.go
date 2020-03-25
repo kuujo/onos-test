@@ -15,6 +15,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
 	"github.com/onosproject/onos-test/pkg/simulation"
 	"path/filepath"
@@ -50,6 +52,7 @@ func getSimulateCommand() *cobra.Command {
 		Example: simulateExample,
 		RunE:    runSimulateCommand,
 	}
+	cmd.Flags().StringP("package", "p", "", "the package to run")
 	cmd.Flags().StringP("image", "i", "", "the simulation image to run")
 	cmd.Flags().String("image-pull-policy", string(corev1.PullIfNotPresent), "the Docker image pull policy")
 	cmd.Flags().StringArrayP("values", "f", []string{}, "release values paths")
@@ -59,14 +62,13 @@ func getSimulateCommand() *cobra.Command {
 	cmd.Flags().DurationP("duration", "d", 10*time.Minute, "the duration for which to run the simulation")
 	cmd.Flags().StringToStringP("args", "a", map[string]string{}, "a mapping of named simulation arguments")
 	cmd.Flags().StringToStringP("schedule", "r", map[string]string{}, "a mapping of operations to schedule")
-
-	_ = cmd.MarkFlagRequired("image")
 	return cmd
 }
 
 func runSimulateCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
+	pkgPath, _ := cmd.Flags().GetString("package")
 	image, _ := cmd.Flags().GetString("image")
 	sim, _ := cmd.Flags().GetString("simulation")
 	workers, _ := cmd.Flags().GetInt("simulators")
@@ -78,6 +80,10 @@ func runSimulateCommand(cmd *cobra.Command, args []string) error {
 	operations, _ := cmd.Flags().GetStringToString("schedule")
 	imagePullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	pullPolicy := corev1.PullPolicy(imagePullPolicy)
+
+	if pkgPath == "" && image == "" {
+		return errors.New("must specify either a --package or --image to run")
+	}
 
 	rates := make(map[string]time.Duration)
 	jitters := make(map[string]float64)
@@ -112,6 +118,20 @@ func runSimulateCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	testID := random.NewPetName(2)
+	if image == "" {
+		image = fmt.Sprintf("onosproject/onit:%s", testID)
+	}
+
+	if pkgPath != "" {
+		err = buildImage(pkgPath, image)
+		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+	}
+
 	var context string
 	if len(args) > 0 {
 		path, err := filepath.Abs(args[0])
@@ -123,7 +143,7 @@ func runSimulateCommand(cmd *cobra.Command, args []string) error {
 
 	config := &simulation.Config{
 		Config: &job.Config{
-			ID:              random.NewPetName(2),
+			ID:              testID,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 			Context:         context,
