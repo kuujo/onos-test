@@ -15,9 +15,13 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"github.com/onosproject/onos-test/pkg/job"
+	"go/build"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,6 +42,7 @@ func getTestCommand() *cobra.Command {
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runTestCommand,
 	}
+	cmd.Flags().StringP("package", "p", "", "the package to run")
 	cmd.Flags().StringP("image", "i", "", "the test image to run")
 	cmd.Flags().String("image-pull-policy", string(corev1.PullIfNotPresent), "the Docker image pull policy")
 	cmd.Flags().StringArrayP("values", "f", []string{}, "release values paths")
@@ -48,14 +53,13 @@ func getTestCommand() *cobra.Command {
 	cmd.Flags().Int("iterations", 1, "number of iterations")
 	cmd.Flags().Bool("until-failure", false, "run until an error is detected")
 	cmd.Flags().Bool("no-teardown", false, "do not tear down clusters following tests")
-
-	_ = cmd.MarkFlagRequired("image")
 	return cmd
 }
 
 func runTestCommand(cmd *cobra.Command, args []string) error {
 	setupCommand(cmd)
 
+	_package, _ := cmd.Flags().GetString("package")
 	image, _ := cmd.Flags().GetString("image")
 	files, _ := cmd.Flags().GetStringArray("values")
 	sets, _ := cmd.Flags().GetStringArray("set")
@@ -65,6 +69,10 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 	pullPolicy, _ := cmd.Flags().GetString("image-pull-policy")
 	iterations, _ := cmd.Flags().GetInt("iterations")
 	untilFailure, _ := cmd.Flags().GetBool("until-failure")
+
+	if _package == "" && image == "" {
+		return errors.New("must specify either a --package or --image to run")
+	}
 
 	if untilFailure {
 		iterations = -1
@@ -80,6 +88,8 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	testID := random.NewPetName(2)
+
 	var context string
 	if len(args) > 0 {
 		path, err := filepath.Abs(args[0])
@@ -89,15 +99,116 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 		context = path
 	}
 
+	if _package != "" {
+		workDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+
+		pkg, err := build.Import(_package, workDir, build.ImportComment)
+		if err != nil {
+			return err
+		}
+
+		if !pkg.IsCommand() {
+			return errors.New("test package must be a command")
+		}
+
+		if context == "" {
+			println(pkg.SrcRoot)
+			context = pkg.SrcRoot
+		}
+
+		tempDir := filepath.Join(os.TempDir(), "onit", testID)
+
+		// Build the command
+		goBuild := exec.Command("go", "build", "-o", filepath.Join(tempDir, "main"), _package)
+		goBuild.Stderr = os.Stderr
+		goBuild.Stdout = os.Stdout
+		env := os.Environ()
+		env = append(env, "GOOS=linux", "CGO_ENABLED=0")
+		goBuild.Env = env
+
+		if err := goBuild.Run(); err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+
+		defer func() {
+			_ = os.Remove(tempDir)
+		}()
+
+		// Generate a Dockerfile to build the test image
+		file, err := os.Create(filepath.Join(tempDir, "Dockerfile"))
+		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+		defer file.Close()
+
+		fmt.Fprintf(file, `
+FROM alpine
+
+RUN addgroup -S test && adduser -S test -G test
+
+USER test
+
+ADD main /usr/local/bin/main
+
+WORKDIR /home/test
+
+ENTRYPOINT ["main"]
+`)
+
+		// If the image tag was not specified, generate one from the test ID
+		if image == "" {
+			image = fmt.Sprintf("onosproject/onit:%s", testID)
+		}
+
+		// Build the Docker image
+		dockerBuild := exec.Command("docker", "build", "-t", image, tempDir)
+		dockerBuild.Stderr = os.Stderr
+		dockerBuild.Stdout = os.Stdout
+
+		if err := dockerBuild.Run(); err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+
+		// Determine whether the test is being run on a KIND cluster
+		kindCluster, err := isKindCluster()
+		if err != nil {
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			return err
+		}
+
+		// Load the image into KIND
+		if kindCluster {
+			kindLoad := exec.Command("kind", "load", "docker-image", image)
+			kindLoad.Stderr = os.Stderr
+			kindLoad.Stdout = os.Stdout
+
+			if err := kindLoad.Run(); err != nil {
+				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true
+				return err
+			}
+		}
+	}
+
 	config := &test.Config{
 		Config: &job.Config{
-			ID:              random.NewPetName(2),
+			ID:              testID,
 			Image:           image,
 			ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 			Context:         context,
 			ValueFiles:      valueFiles,
 			Values:          values,
-			Timeout:    timeout,
+			Timeout:         timeout,
 		},
 		Suites:     suites,
 		Tests:      testNames,
@@ -105,6 +216,28 @@ func runTestCommand(cmd *cobra.Command, args []string) error {
 		Verbose:    logging.GetVerbose(),
 	}
 	return test.Run(config)
+}
+
+func isKindCluster() (bool, error) {
+	kubeConfig := os.Getenv("KUBECONFIG")
+	if kubeConfig == "" {
+		return false, nil
+	}
+
+	buffer := bytes.NewBuffer(nil)
+	cmd := exec.Command("kind", "get", "kubeconfig-path")
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = buffer
+	if err := cmd.Run(); err != nil {
+		return false, nil
+	}
+	kubeConfigPaths := strings.Split(strings.TrimSuffix(buffer.String(), "\n"), "\n")
+	for _, path := range kubeConfigPaths {
+		if kubeConfig == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func parseFiles(files []string) (map[string][]string, error) {

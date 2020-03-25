@@ -1,6 +1,6 @@
 FROM alpine:3.8
 
-RUN apk upgrade --update --no-cache && apk add git
+RUN apk upgrade --update --no-cache
 
 RUN addgroup -S test && adduser -S test -G test
 
